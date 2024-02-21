@@ -3,6 +3,6 @@ from django.apps import AppConfig
 
 class StoreConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'holcstore'
+    name = 'hostore'
     verbose = 'Holmium Load Curve Store'
-    label = 'holcstore'
+    label = 'hostore'
