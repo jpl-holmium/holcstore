@@ -15,11 +15,10 @@ Quick start
     ]
 
 
-2. Run ``python manage.py migrate`` to create the models.
 
-3. Start using the abstract model ``Store`` by importing it ::
+2. Start using the abstract model ``Store`` by importing it ::
 
-    from holcstore.store.models import Store
+    from store.models import Store
 
     class YourStore(Store):
         # add new fields
