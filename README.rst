@@ -18,7 +18,7 @@ Quick start
 
 2. Start using the abstract model ``Store`` by importing it ::
 
-    from store.models import Store
+    from hostore.models import Store
 
     class YourStore(Store):
         # add new fields

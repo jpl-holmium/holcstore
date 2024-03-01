@@ -56,6 +56,14 @@ class HoCacheTestCase(TestCase):
 
         data = TestDataStore.get_lc(new_prm, self.test_client_id)
         pd.testing.assert_series_equal(data['data'], self.test_data, check_names=False)
+
+    def test_set_existing_lc(self):
+        # Test the set_lc method
+        new_prm = 'new_test_param'
+        # Insert 2 times in a row => should not fail
+        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id)
+        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id)
+
     # *******************************************************
 
     def test_clearing(self):

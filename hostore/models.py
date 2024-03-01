@@ -108,7 +108,7 @@ class Store(models.Model):
             buf = io.BytesIO()
             df.to_feather(buf, compression='lz4')
             v = buf.getvalue()
-            cls(client_id=client_id, data=v, prm=prm).save(force_insert=True)
+            cls.objects.update_or_create(client_id=client_id, prm=prm, defaults=dict(data=v))
             logger.info(f'SET prm {prm} in cache DONE')
         else:
             raise ValueError(f'Cannot cache value of type {type(value)}, only dataframe are accepted')
