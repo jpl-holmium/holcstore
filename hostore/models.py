@@ -159,3 +159,4 @@ class Store(models.Model):
 class TestDataStore(Store):
     class Meta(Store.Meta):
         abstract = False
+        app_label = 'hostore'
