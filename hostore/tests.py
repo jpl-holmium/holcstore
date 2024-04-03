@@ -14,8 +14,10 @@ class HoCacheTestCase(TestCase):
         # Set up data for the tests
         # For example, create a HoCache instance
         self.test_prm = 'test_prm'
+        self.test_prm_2 = 'test_prm_2'
         self.test_client_id = 1
         self.test_data = pd.Series([1, 2, 3], index=[0, 1, 2], name='data')
+        self.test_data_2 = self.test_data * 2
 
         # Convert test data to a binary format
         df = self.test_data.to_frame(name=self.test_prm)
@@ -30,13 +32,32 @@ class HoCacheTestCase(TestCase):
             data=self.test_binary_data
         )
 
+        df = self.test_data_2.to_frame(name=self.test_prm)
+        df.reset_index(inplace=True, names=['index'])
+        buf = io.BytesIO()
+        df.to_feather(buf, compression='lz4')
+        self.test_binary_data_2 = buf.getvalue()
+
+        TestDataStore.objects.create(
+            prm=self.test_prm_2,
+            client_id=self.test_client_id,
+            data=self.test_binary_data,
+            version=0
+        )
+        TestDataStore.objects.create(
+            prm=self.test_prm_2,
+            client_id=self.test_client_id,
+            data=self.test_binary_data_2,
+            version=1
+        )
+
     def test_get_lc(self):
         # Test the get_lc method
         cache_entry = TestDataStore.get_lc(prm=self.test_prm, client_id=self.test_client_id)
         self.assertIsNotNone(cache_entry)
-        self.assertEqual(cache_entry['prm'], self.test_prm)
-        # Add more assertions as needed
-        pd.testing.assert_series_equal(cache_entry['data'], self.test_data, check_names=False)
+        self.assertEquals(len(cache_entry), 1)
+        self.assertEqual(cache_entry[0]['prm'], self.test_prm)
+        pd.testing.assert_series_equal(cache_entry[0]['data'], self.test_data, check_names=False)
 
     def test_get_many_lc(self):
         # Test the get_many_lc method
@@ -44,37 +65,110 @@ class HoCacheTestCase(TestCase):
         results = TestDataStore.get_many_lc(prms=prms, client_id=self.test_client_id)
         self.assertIn(self.test_prm, results)
         self.assertNotIn('non_existing_prm', results)
-        # Add more assertions as needed
-        pd.testing.assert_series_equal(results[self.test_prm]['data'], self.test_data, check_names=False)
+        self.assertEqual(len(results[self.test_prm]), 1)
+        pd.testing.assert_series_equal(results[self.test_prm][0]['data'], self.test_data, check_names=False)
+
+    def test_set_many_lc(self):
+        # Test the get_many_lc method
+        dataseries = dict(prm_1=pd.Series([1, 2, 3]),
+                          prm_2=pd.Series([4, 5, 6]))
+        TestDataStore.set_many_lc(dataseries, self.test_client_id)
+        results = TestDataStore.get_many_lc(['prm_1', 'prm_2'], self.test_client_id)
+        self.assertIn("prm_1", results)
+        self.assertIn("prm_2", results)
+        self.assertEqual(len(results), 2)
+        self.assertNotIn('non_existing_prm', results)
+        self.assertEqual(len(results['prm_1']), 1)
+        self.assertEqual(len(results['prm_2']), 1)
+        pd.testing.assert_series_equal(results['prm_1'][0]['data'], dataseries['prm_1'], check_names=False)
+        pd.testing.assert_series_equal(results['prm_2'][0]['data'], dataseries['prm_2'], check_names=False)
 
     def test_set_lc(self):
         # Test the set_lc method
-        new_prm = 'new_test_param'
+        new_prm = 'new_test_prm'
         TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id)
-        new_entry = TestDataStore.objects.get(prm=new_prm, client_id=self.test_client_id)
-        self.assertIsNotNone(new_entry)
+        # We should find the prm
+        TestDataStore.objects.get(prm=new_prm, client_id=self.test_client_id, version=0)
 
+        # Récupération des données du PRM sans spécifier de version
         data = TestDataStore.get_lc(new_prm, self.test_client_id)
-        pd.testing.assert_series_equal(data['data'], self.test_data, check_names=False)
+        self.assertEquals(len(data), 1)
+        pd.testing.assert_series_equal(data[0]['data'], self.test_data, check_names=False)
+
+        # Récupération des données du PRM en spécifiant la version
+        data = TestDataStore.get_lc(new_prm, self.test_client_id, version=0)
+        self.assertEquals(len(data), 1)
+        pd.testing.assert_series_equal(data[0]['data'], self.test_data, check_names=False)
 
     def test_set_existing_lc(self):
         # Test the set_lc method
         new_prm = 'new_test_param'
-        # Insert 2 times in a row => should not fail
-        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id)
-        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id)
+        # Insert 2 times in a row without versionning
+        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id, versionning=False)
+        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id, versionning=False)
+
+        data = TestDataStore.get_lc(new_prm, self.test_client_id, version=0)
+        self.assertEquals(len(data), 1)
+        self.assertEquals(data[0]['version'], 0)
+
+        # Insert 2 times in a row with versionning
+        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id, versionning=True)
+        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id, versionning=True)
+
+        data = TestDataStore.get_lc(new_prm, self.test_client_id, combined_versions=False)
+        self.assertEquals(len(data), 3)
+        self.assertEquals(data[0]['version'], 2)
+
+        data = TestDataStore.get_lc(new_prm, self.test_client_id, combined_versions=True)
+        self.assertEquals(len(data), 1)
+        self.assertEquals(data[0]['version'], 2)
+
+    def test_combined_versions(self):
+        data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=True)
+        self.assertEquals(len(data), 1)
+        self.assertEquals(data[0]['version'], 1)
+        # Vérifier que la combinaison donne la deuxième version
+        pd.testing.assert_series_equal(data[0]['data'], self.test_data_2, check_names=False)
+
+        # test if we specify a version
+        data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=False, version=1)
+        self.assertEquals(len(data), 1)
+        self.assertEquals(data[0]['version'], 1)
+        # Vérifier que la combinaison donne la deuxième version
+        pd.testing.assert_series_equal(data[0]['data'], self.test_data_2, check_names=False)
+
+    def test_non_combined_versions(self):
+        data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=False)
+        self.assertEquals(len(data), 2)
+        self.assertEquals(data[0]['version'], 1)
+        self.assertEquals(data[1]['version'], 0)
+        # Vérifier que la combinaison donne la deuxième version
+        pd.testing.assert_series_equal(data[0]['data'], self.test_data_2, check_names=False)
+        pd.testing.assert_series_equal(data[1]['data'], self.test_data, check_names=False)
+
+        # test if we specify a version
+        data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=False, version=0)
+        self.assertEquals(len(data), 1)
+        self.assertEquals(data[0]['version'], 0)
+        # Vérifier que la combinaison donne la deuxième version
+        pd.testing.assert_series_equal(data[0]['data'], self.test_data, check_names=False)
 
     # *******************************************************
 
     def test_clearing(self):
         TestDataStore.clear([self.test_prm], self.test_client_id)
-        ds_after_clear = TestDataStore.get_lc(self.test_prm, self.test_client_id)
-        self.assertEqual(ds_after_clear, None)
+        data_after_clear = TestDataStore.get_lc(self.test_prm, self.test_client_id)
+        self.assertEqual(len(data_after_clear), 0)
+
+    def test_clearing_version(self):
+        TestDataStore.clear([self.test_prm_2], self.test_client_id, version=0)
+        data_after_clear = TestDataStore.get_lc(self.test_prm, self.test_client_id, combined_versions=False)
+        self.assertEqual(len(data_after_clear), 1)
 
     def test_clearing_all(self):
         TestDataStore.clear_all()
-        ds_after_clear = TestDataStore.get_lc(self.test_prm, self.test_client_id)
-        self.assertEqual(ds_after_clear, None)
+        data_after_clear = TestDataStore.get_lc(self.test_prm, self.test_client_id)
+        self.assertEqual(len(data_after_clear), 0)
 
     def test_set_get_clear_dataframe(self):
         idx = pd.date_range('2022-01-01', '2024-01-01', freq='30min')
@@ -82,12 +176,15 @@ class HoCacheTestCase(TestCase):
         ds_initial = pd.Series(data, index=idx)
         new_client_id = self.test_client_id + 1
         # Set key, value in cache
-        TestDataStore.set_lc('key', ds_initial, new_client_id)
+        TestDataStore.set_lc('key', ds_initial, new_client_id, versionning=False)
         # Get key, value from cache
         data = TestDataStore.get_lc('key', new_client_id)
-        self.assertEqual(ds_initial.compare(data['data']).shape[0], 0)
+        self.assertEqual(ds_initial.compare(data[0]['data']).shape[0], 0)
         TestDataStore.clear_all(client_id=new_client_id)
-        self.assertEqual(TestDataStore.count(self.test_client_id), 1)
+        # 3 entrées sur le client_id self.test_client_id
+        self.assertEqual(TestDataStore.count(self.test_client_id), 3)
+        # 3 entrées sur le client_id self.test_client_id
+        self.assertEqual(TestDataStore.count(self.test_client_id + 1), 0)
 
     def test_set_dataframe_with_nan(self):
         idx = pd.date_range('2022-01-01', '2024-01-01', freq='30min')
@@ -97,11 +194,11 @@ class HoCacheTestCase(TestCase):
         TestDataStore.set_lc('key', ds_initial, self.test_client_id)
         # Get key, value from cache
         data = TestDataStore.get_lc('key', self.test_client_id)
-        self.assertEqual(data, None)
+        self.assertEqual(len(data), 0)
 
     def test_not_existing_key(self):
-        ds = TestDataStore.get_lc('not_existing_key', self.test_client_id)
-        self.assertEqual(ds, None)
+        data = TestDataStore.get_lc('not_existing_key', self.test_client_id)
+        self.assertEqual(len(data), 0)
 
     def test_cache_not_series(self):
         self.assertRaises(ValueError, TestDataStore.set_lc, 'key', 'hello', self.test_client_id)
@@ -111,5 +208,5 @@ class HoCacheTestCase(TestCase):
         ds.index.name = 'test'
         TestDataStore.set_lc('key', ds, self.test_client_id)
         # Get the serie from cache
-        ds_from_cache = TestDataStore.get_lc('key', self.test_client_id)['data']
+        ds_from_cache = TestDataStore.get_lc('key', self.test_client_id)[0]['data']
         pd.testing.assert_series_equal(ds, ds_from_cache, check_names=False)
