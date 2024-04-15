@@ -1,13 +1,13 @@
 import datetime as dt
 import logging
 import pandas as pd
-from typing import Union
+from typing import Union, List, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 def check_ts_completeness(ds: pd.Series, start: dt.datetime, end: dt.datetime, tag=None, freq=None, freq_margin=None,
-                          msgs=None):
+                          msgs=None) -> List[Tuple[Union[dt.datetime, dt.date], Union[dt.datetime, dt.date]]]:
     """
     Check if timeserie ds contains full data between start and end at freq.
 

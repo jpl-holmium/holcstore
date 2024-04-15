@@ -2,14 +2,15 @@ import io
 import logging
 from collections import defaultdict
 from typing import List, Dict
-
+import datetime as dt
 import pandas as pd
 from django.db import models
 from django.db.models import Max
 from pyarrow import BufferReader
 
 from .manager import StoreQuerySet
-from .utils.timeseries import ts_combine_first
+from .utils.timeseries import ts_combine_first, find_constant_sequences, check_ts_completeness
+from .utils.utils import chunks
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,51 @@ class Store(models.Model):
     @classmethod
     def count(cls, client_id: int):
         return cls.objects.filter(client_id=client_id).count()
+
+    @classmethod
+    def find_holes(cls, client_id: int, sd: dt.datetime, ed: dt.datetime, freq='30min', prms: List[str] = None, chunk_size=50,
+                   freq_margin=pd.Timedelta(minutes=0)) -> Dict[str, List]:
+        """
+        Find holes (missing data periods) for multiple prms within a specified datetime range.
+
+        This method retrieves data from a database for each parameter associated with a client_id,
+        checks each dataset for missing data within the specified datetime range, and identifies the start
+        and end of each missing data period.
+
+        :param client_id: ID of the client for whom the data is being checked.
+        :param sd: Start datetime of the range to check for holes.
+        :param ed: End datetime of the range to check for holes.
+        :param freq: Frequency at which the data is expected, defaulting to '30min'.
+        :param prms: Optional list of prms to check; if None, all parameters for the client are checked.
+        :param chunk_size: The size of chunks to break the parameter list into for batch processing.
+                           This helps in managing memory and processing large datasets efficiently, defaulting to 50.
+        :param freq_margin: Freq margin for null sequences
+        :return: A dictionary with prm as keys and a list of tuples (start, end) indicating
+                 the missing data periods for each parameter. Start and end are included
+        """
+        # If no prm are specified, retrieve all prm for the given client from the database
+        if prms is None:
+            prms = list(cls.objects.filter(client_id=client_id).values_list('prm', flat=True))
+
+        # Iterate over prms in chunks to manage memory usage and efficiency
+        for prm_chunk in chunks(prms, chunk_size):
+            data_by_prm = cls.get_many_lc(prm_chunk, client_id, combined_versions=True)
+
+            # Check each parameter's data for completeness
+            for prm in prm_chunk:
+                nulls_seqs = []
+                data = data_by_prm[prm]
+                if len(data) == 0:
+                    # If there's no data for a prm, the entire range is considered as a hole
+                    nulls_seqs = [(sd, ed)]
+                else:
+                    # Data is wrapped in a list, and there's only one dataset per prm (combined_versions=True)
+                    assert len(data) == 1
+                    nulls_seqs = check_ts_completeness(data[0]['data'], sd, ed, freq=freq, freq_margin=freq_margin)
+
+                # Yield the output for this prm
+                # This allows processing part by part without waiting for the entire operation to complete
+                yield prm, nulls_seqs
 
     @classmethod
     def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None) -> List[Dict]:

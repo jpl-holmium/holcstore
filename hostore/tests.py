@@ -1,8 +1,9 @@
 import io
 import random
-
+import datetime as dt
 import numpy as np
 import pandas as pd
+import pytz
 from django.test import TestCase
 
 from .models import TestDataStore
@@ -210,3 +211,51 @@ class HoCacheTestCase(TestCase):
         # Get the serie from cache
         ds_from_cache = TestDataStore.get_lc('key', self.test_client_id)[0]['data']
         pd.testing.assert_series_equal(ds, ds_from_cache, check_names=False)
+
+    def test_find_holes(self):
+        sd = dt.datetime(2024, 1, 1).astimezone(tz=pytz.UTC)
+        ed = dt.datetime(2024, 1, 11).astimezone(tz=pytz.UTC)
+        idx = pd.date_range(sd, ed, freq='D')
+        ds_no_hole = pd.Series(10, idx)
+        ds_no_hole.index.name = 'no_hole'
+
+        ds_one_hole = ds_no_hole.copy()
+        ds_one_hole.loc['2024-01-02':'2024-01-03'] = None
+        ds_one_hole.index.name = 'one_hole'
+
+        ds_two_holes = ds_no_hole.copy()
+        ds_two_holes.loc['2024-01-02':'2024-01-03'] = None
+        ds_two_holes.loc['2024-01-05':'2024-01-08'] = None
+        ds_two_holes.index.name = 'two_holes'
+
+        TestDataStore.set_lc('no_hole', ds_no_hole, self.test_client_id)
+        TestDataStore.set_lc('one_hole', ds_one_hole, self.test_client_id)
+        TestDataStore.set_lc('two_holes', ds_two_holes, self.test_client_id)
+
+        # Get holes of one_hole
+        holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['one_hole']))
+        self.assertEquals(len(holes), 1)
+        self.assertEquals(holes[0][0], 'one_hole')
+        self.assertEquals(holes[0][1][0],
+                          (dt.datetime(2024, 1, 2).astimezone(tz=pytz.UTC),
+                           dt.datetime(2024, 1, 3).astimezone(tz=pytz.UTC)))
+
+        # Get holes of two_holes
+        holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['two_holes']))
+        self.assertEquals(len(holes), 1)
+        self.assertEquals(holes[0][0], 'two_holes')
+        self.assertEquals(holes[0][1][0],
+                          (dt.datetime(2024, 1, 2).astimezone(tz=pytz.UTC),
+                           dt.datetime(2024, 1, 3).astimezone(tz=pytz.UTC)))
+        self.assertEquals(holes[0][1][1],
+                          (dt.datetime(2024, 1, 5).astimezone(tz=pytz.UTC),
+                           dt.datetime(2024, 1, 8).astimezone(tz=pytz.UTC)))
+
+        # Get holes of no_hole
+        holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['no_hole']))
+        self.assertEquals(holes[0][0], 'no_hole')
+        self.assertEquals(holes[0][1], [])
+
+        # Get all holes
+        holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['no_hole', 'one_hole', 'two_holes', 'non_existing']))
+        self.assertEquals(len(holes), 4)
