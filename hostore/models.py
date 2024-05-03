@@ -11,6 +11,7 @@ from pyarrow import BufferReader
 from .manager import StoreQuerySet
 from .utils.timeseries import ts_combine_first, find_constant_sequences, check_ts_completeness
 from .utils.utils import chunks
+from django.utils.timezone import now
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class Store(models.Model):
     client_id = models.IntegerField()
     prm = models.CharField(max_length=30)
     last_modified = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
     data = models.BinaryField(blank=True, null=True)
     version = models.IntegerField(default=0)
 
