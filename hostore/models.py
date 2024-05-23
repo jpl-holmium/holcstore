@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class Store(models.Model):
     client_id = models.IntegerField()
-    prm = models.CharField(max_length=30)
+    prm = models.CharField(max_length=70)
     last_modified = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True, null=True)
     data = models.BinaryField(blank=True, null=True)
