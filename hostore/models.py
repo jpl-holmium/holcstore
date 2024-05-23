@@ -9,9 +9,9 @@ from django.db.models import Max
 from pyarrow import BufferReader
 
 from .manager import StoreQuerySet
-from .utils.timeseries import ts_combine_first, find_constant_sequences, check_ts_completeness
+from .utils.timeseries import ts_combine_first, check_ts_completeness
 from .utils.utils import chunks
-from django.utils.timezone import now
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,14 @@ class Store(models.Model):
         indexes = [models.Index(fields=['prm', 'client_id']), ]
 
     @classmethod
-    def count(cls, client_id: int):
-        return cls.objects.filter(client_id=client_id).count()
+    def count(cls, client_id: int, custom_filters=None):
+        if custom_filters is None:
+            custom_filters = {}
+        return cls.objects.filter(client_id=client_id, **custom_filters).count()
 
     @classmethod
     def find_holes(cls, client_id: int, sd: dt.datetime, ed: dt.datetime, freq='30min', prms: List[str] = None, chunk_size=50,
-                   freq_margin=pd.Timedelta(minutes=0)) -> Dict[str, List]:
+                   freq_margin=pd.Timedelta(minutes=0), custom_filters=None) -> Dict[str, List]:
         """
         Find holes (missing data periods) for multiple prms within a specified datetime range.
 
@@ -53,16 +55,19 @@ class Store(models.Model):
         :param chunk_size: The size of chunks to break the parameter list into for batch processing.
                            This helps in managing memory and processing large datasets efficiently, defaulting to 50.
         :param freq_margin: Freq margin for null sequences
+        :param custom_filters: (optionnal) None or dict
         :return: A dictionary with prm as keys and a list of tuples (start, end) indicating
                  the missing data periods for each parameter. Start and end are included
         """
+        if custom_filters is None:
+            custom_filters = {}
         # If no prm are specified, retrieve all prm for the given client from the database
         if prms is None:
-            prms = list(cls.objects.filter(client_id=client_id).values_list('prm', flat=True))
+            prms = list(cls.objects.filter(client_id=client_id, **custom_filters).values_list('prm', flat=True))
 
         # Iterate over prms in chunks to manage memory usage and efficiency
         for prm_chunk in chunks(prms, chunk_size):
-            data_by_prm = cls.get_many_lc(prm_chunk, client_id, combined_versions=True)
+            data_by_prm = cls.get_many_lc(prm_chunk, client_id, combined_versions=True, **custom_filters)
 
             # Check each parameter's data for completeness
             for prm in prm_chunk:
@@ -81,7 +86,7 @@ class Store(models.Model):
                 yield prm, nulls_seqs
 
     @classmethod
-    def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None) -> List[Dict]:
+    def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None) -> List[Dict]:
         """
         Get the prm load curve
         Args:
@@ -89,11 +94,15 @@ class Store(models.Model):
             client_id: int, client's id
             combined_versions: bool, if multiple versions exists we combine them (default True)
             version: return only the selected version
+            custom_filters: (optionnal) None or dict
         Returns:
             List[Dict]
         """
         logger.info(f'Getting load curve with prm {prm} for client {client_id}')
-        qs = cls.objects.filter(prm=prm, client_id=client_id).order_by('-version')
+        if custom_filters is None:
+            custom_filters = {}
+
+        qs = cls.objects.filter(prm=prm, client_id=client_id, **custom_filters).order_by('-version')
         if version is not None:
             qs = qs.filter(version=version)
 
@@ -117,7 +126,7 @@ class Store(models.Model):
         return entries
 
     @classmethod
-    def get_many_lc(cls, prms: [str], client_id: int, combined_versions=True) -> Dict[str, List[Dict]]:
+    def get_many_lc(cls, prms: [str], client_id: int, combined_versions=True, custom_filters=None) -> Dict[str, List[Dict]]:
         """
         Get many prms from cache
         Args:
@@ -127,7 +136,9 @@ class Store(models.Model):
         Returns:
             Dict[str, List[Dict]]
         """
-        qs = cls.objects.filter(prm__in=prms, client_id=client_id).order_by('-version')
+        if custom_filters is None:
+            custom_filters = {}
+        qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters).order_by('-version')
         results = defaultdict(lambda: [])
         invalid_ids = []
         for entry in qs:
@@ -155,7 +166,7 @@ class Store(models.Model):
         return results
 
     @classmethod
-    def set_lc(cls, prm: str, value: pd.Series, client_id: int, versionning=False) -> None:
+    def set_lc(cls, prm: str, value: pd.Series, client_id: int, versionning=False, attributes_to_set=None) -> None:
         """
         Set one prm to cache
         Args:
@@ -163,10 +174,12 @@ class Store(models.Model):
             value: pd.Series
             client_id: int, client's id
             versionning: bool, if True, a new version will be saved else the load curve is replaced (default False)
-
+            attributes_to_set: (optionnal) None or dict
         Returns:
             None
         """
+        if attributes_to_set is None:
+            attributes_to_set = {}
         logger.info(f'SET key {prm} in cache')
         if isinstance(value, pd.Series):
             if value.isnull().all():
@@ -178,9 +191,9 @@ class Store(models.Model):
             df.to_feather(buf, compression='lz4')
             v = buf.getvalue()
             if not versionning:
-                cls.objects.update_or_create(client_id=client_id, prm=prm, defaults=dict(data=v))
+                cls.objects.update_or_create(client_id=client_id, prm=prm, defaults=dict(data=v), **attributes_to_set)
             else:
-                latest_version = cls.objects.filter(client_id=client_id, prm=prm).aggregate(Max('version'))[
+                latest_version = cls.objects.filter(client_id=client_id, prm=prm, **attributes_to_set).aggregate(Max('version'))[
                     'version__max']
                 if latest_version is not None:
                     # If there's at least one object with the same prm, increment the version
@@ -189,57 +202,67 @@ class Store(models.Model):
                     # If there are no objects with the same prm, start with version 0
                     version = 0
                 logger.info(f"version to insert {version}")
-                cls.objects.create(client_id=client_id, prm=prm, data=v, version=version)
+                cls.objects.create(client_id=client_id, prm=prm, data=v, version=version, **attributes_to_set)
             logger.info(f'SET prm {prm} in cache DONE')
         else:
             raise ValueError(f'Cannot cache value of type {type(value)}, only dataframe are accepted')
 
     @classmethod
-    def set_many_lc(cls, dataseries: Dict[str, pd.Series], client_id: int, versionning=False) -> None:
+    def set_many_lc(cls, dataseries: Dict[str, pd.Series], client_id: int, versionning=False, attributes_to_set=None) -> None:
         """
         Update prms contained in dataseries dict
         Args:
             dataseries: dict(key: pd.Series)
             client_id: int, client's id
             versionning: bool, if True, a new version will be saved for each prm else the load curve is replaced
+            attributes_to_set: (optionnal) None or dict
         Returns:
-            bool
+            None
         """
         if len(dataseries) > 0:
             logger.info(f'Updating cache for {list(dataseries.keys())}')
         for prm, data in dataseries.items():
             if data is not None and not data.empty:
-                cls.set_lc(prm, data, client_id, versionning=versionning)
+                cls.set_lc(prm, data, client_id, versionning=versionning, attributes_to_set=attributes_to_set)
 
     @classmethod
-    def clear(cls, prms: [str], client_id: int, version=None) -> None:
+    def clear(cls, prms: [str], client_id: int, version=None, custom_filters=None) -> None:
         """
         Method to clear multiple prm from cache
         Args:
             prms: list of prms
             client_id: client's id
             version: version id to delete
+            custom_filters: (optionnal) None or dict
         Returns:
             None
         """
-        qs = cls.objects.filter(prm__in=prms, client_id=client_id)
+        if custom_filters is None:
+            custom_filters = {}
+        qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters)
         if version is not None:
             qs = qs.filter(version=version)
         qs.delete()
 
     @classmethod
-    def clear_all(cls, client_id: int = None) -> None:
+    def clear_all(cls, client_id: int = None, custom_filters=None) -> None:
         """
         Method to clear multiple prm from cache
         Args:
             client_id: client's id
+            custom_filters: (optionnal) None or dict
         Returns:
             None
         """
-        if client_id is not None:
-            cls.objects.filter(client_id=client_id).delete()
+        if custom_filters is None:
+            custom_filters = {}
+            qs = cls.objects.filter(**custom_filters)
         else:
-            cls.objects.all().delete()
+            qs = cls.objects.all()
+        if client_id is not None:
+            qs.filter(client_id=client_id).delete()
+        else:
+            qs.delete()
 
 
 class TestDataStore(Store):
