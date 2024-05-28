@@ -126,6 +126,34 @@ class Store(models.Model):
         return entries
 
     @classmethod
+    def get_lc_by_ids(cls, ids: List[int], client_id: int) -> List[Dict]:
+        """
+        Get the prm load curve
+        Args:
+            ids: List of ids
+            client_id: int, client's id
+        Returns:
+            List[Dict]
+        """
+        logger.info(f'Getting load curve with ids {ids} for client {client_id}')
+
+        qs = cls.objects.filter(id__in=ids, client_id=client_id)
+
+        entries = []
+        for entry in qs:
+            entry_dict = vars(entry)
+            reader = BufferReader(entry_dict['data'])
+            ds = pd.read_feather(reader)
+            if 'index' in ds.columns:
+                ds.set_index('index', inplace=True)
+            else:
+                logger.info(f'data is malformed, remove id {id}')
+                entry.delete()
+            entry_dict['data'] = ds.iloc[:, 0]
+            entries.append(entry_dict)
+        return entries
+
+    @classmethod
     def get_many_lc(cls, prms: [str], client_id: int, combined_versions=True, custom_filters=None) -> Dict[str, List[Dict]]:
         """
         Get many prms from cache

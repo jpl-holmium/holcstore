@@ -156,6 +156,18 @@ class HoCacheTestCase(TestCase):
 
     # *******************************************************
 
+    def test_get_by_ids(self):
+        TestDataStore.clear_all(self.test_client_id)
+        # Test get_by_ids method
+        new_prm = 'new_test_prm'
+        TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id)
+
+        ids = TestDataStore.objects.all().values_list('id', flat=True)
+        data = TestDataStore.get_lc_by_ids(ids, self.test_client_id)
+
+        self.assertEquals(len(data), 1)
+        pd.testing.assert_series_equal(data[0]['data'], self.test_data, check_names=False)
+
     def test_clearing(self):
         TestDataStore.clear([self.test_prm], self.test_client_id)
         data_after_clear = TestDataStore.get_lc(self.test_prm, self.test_client_id)
