@@ -11,7 +11,7 @@ from pyarrow import BufferReader
 
 from .manager import StoreQuerySet
 from .utils.timeseries import ts_combine_first, check_ts_completeness
-from .utils.utils import chunks
+from .utils.utils import chunks, slice_with_delay
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,9 @@ class Store(models.Model):
 
     @classmethod
     def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None,
-               combined_by=('prm',), order_by=('-version',)) -> List[Dict]:
+               combined_by=('prm',),
+               order_by=('-version',),
+               combined_delay=pd.Timedelta(days=1)) -> List[Dict]:
         """
         Get the prm load curve
         Args:
@@ -135,6 +137,7 @@ class Store(models.Model):
         if len(entries) > 0 and combined_versions:
             for e in entries:
                 key = str([e[attr] for attr in cleared_combined_by])
+                e['data'] = slice_with_delay(e['data'], combined_delay)
                 if ds_combined_dict[key] is None:
                     ds_combined_dict[key] = e
                 else:
@@ -145,7 +148,9 @@ class Store(models.Model):
     @classmethod
     def get_many_lc(cls, prms: [str], client_id: int, combined_versions=True,
                     custom_filters=None,
-                    combined_by=('prm',), order_by=('-version',)) -> Dict[str, List[Dict]]:
+                    combined_by=('prm',),
+                    order_by=('-version',),
+                    combined_delay=pd.Timedelta(days=1)) -> Dict[str, List[Dict]]:
         """
         Get many prms from cache
         Args:
@@ -185,6 +190,7 @@ class Store(models.Model):
             for prm, entries in results.items():
                 for e in entries:
                     key = str([e[attr] for attr in cleared_combined_by])
+                    e['data'] = slice_with_delay(e['data'], combined_delay)
                     if ds_combined_dict[prm][key] is None:
                         ds_combined_dict[prm][key] = e
                     else:
