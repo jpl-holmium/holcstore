@@ -1,8 +1,9 @@
+import datetime as dt
 import io
 import logging
 from collections import defaultdict
 from typing import List, Dict
-import datetime as dt
+
 import pandas as pd
 from django.db import models
 from django.db.models import Max
@@ -11,7 +12,6 @@ from pyarrow import BufferReader
 from .manager import StoreQuerySet
 from .utils.timeseries import ts_combine_first, check_ts_completeness
 from .utils.utils import chunks
-
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,11 @@ class Store(models.Model):
         return cls.objects.filter(client_id=client_id, **custom_filters).count()
 
     @classmethod
-    def find_holes(cls, client_id: int, sd: dt.datetime, ed: dt.datetime, freq='30min', prms: List[str] = None, chunk_size=50,
-                   freq_margin=pd.Timedelta(minutes=0), custom_filters=None) -> Dict[str, List]:
+    def find_holes(cls, client_id: int, sd: dt.datetime, ed: dt.datetime, freq='30min', prms: List[str] = None,
+                   chunk_size=50,
+                   freq_margin=pd.Timedelta(minutes=0),
+                   custom_filters=None,
+                   combined_by=('prm',), order_by=('-version',)) -> Dict[str, List]:
         """
         Find holes (missing data periods) for multiple prms within a specified datetime range.
 
@@ -56,6 +59,7 @@ class Store(models.Model):
                            This helps in managing memory and processing large datasets efficiently, defaulting to 50.
         :param freq_margin: Freq margin for null sequences
         :param custom_filters: (optionnal) None or dict
+        :param combined_by: set of attributes for ordering load_curves before combine_first
         :return: A dictionary with prm as keys and a list of tuples (start, end) indicating
                  the missing data periods for each parameter. Start and end are included
         """
@@ -67,7 +71,11 @@ class Store(models.Model):
 
         # Iterate over prms in chunks to manage memory usage and efficiency
         for prm_chunk in chunks(prms, chunk_size):
-            data_by_prm = cls.get_many_lc(prm_chunk, client_id, combined_versions=True, **custom_filters)
+            data_by_prm = cls.get_many_lc(prm_chunk, client_id,
+                                          combined_versions=True,
+                                          combined_by=combined_by,
+                                          order_by=order_by,
+                                          **custom_filters)
 
             # Check each parameter's data for completeness
             for prm in prm_chunk:
@@ -86,7 +94,8 @@ class Store(models.Model):
                 yield prm, nulls_seqs
 
     @classmethod
-    def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None) -> List[Dict]:
+    def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None,
+               combined_by=('prm',), order_by=('-version',)) -> List[Dict]:
         """
         Get the prm load curve
         Args:
@@ -95,6 +104,8 @@ class Store(models.Model):
             combined_versions: bool, if multiple versions exists we combine them (default True)
             version: return only the selected version
             custom_filters: (optionnal) None or dict
+            combined_by: set of attributes to bombined by
+            order_by: set of attributes for ordering load_curves before combine_first
         Returns:
             List[Dict]
         """
@@ -102,7 +113,7 @@ class Store(models.Model):
         if custom_filters is None:
             custom_filters = {}
 
-        qs = cls.objects.filter(prm=prm, client_id=client_id, **custom_filters).order_by('-version')
+        qs = cls.objects.filter(prm=prm, client_id=client_id, **custom_filters).order_by(*order_by)
         if version is not None:
             qs = qs.filter(version=version)
 
@@ -119,54 +130,37 @@ class Store(models.Model):
             entry_dict['data'] = ds.iloc[:, 0]
             entries.append(entry_dict)
 
+        cleared_combined_by = set([attr for attr in combined_by])
+        ds_combined_dict = defaultdict(lambda: None)
         if len(entries) > 0 and combined_versions:
-            ds_combined = ts_combine_first([e['data'] for e in entries])
-            entries[0]['data'] = ds_combined
-            return entries[0:1]
+            for e in entries:
+                key = str([e[attr] for attr in cleared_combined_by])
+                if ds_combined_dict[key] is None:
+                    ds_combined_dict[key] = e
+                else:
+                    ds_combined_dict[key]['data'] = ts_combine_first([ds_combined_dict[key]['data'], e['data']])
+            entries = list(ds_combined_dict.values())
         return entries
 
     @classmethod
-    def get_lc_by_ids(cls, ids: List[int], client_id: int) -> List[Dict]:
-        """
-        Get the prm load curve
-        Args:
-            ids: List of ids
-            client_id: int, client's id
-        Returns:
-            List[Dict]
-        """
-        logger.info(f'Getting load curve with ids {ids} for client {client_id}')
-
-        qs = cls.objects.filter(id__in=ids, client_id=client_id)
-
-        entries = []
-        for entry in qs:
-            entry_dict = vars(entry)
-            reader = BufferReader(entry_dict['data'])
-            ds = pd.read_feather(reader)
-            if 'index' in ds.columns:
-                ds.set_index('index', inplace=True)
-            else:
-                logger.info(f'data is malformed, remove id {id}')
-                entry.delete()
-            entry_dict['data'] = ds.iloc[:, 0]
-            entries.append(entry_dict)
-        return entries
-
-    @classmethod
-    def get_many_lc(cls, prms: [str], client_id: int, combined_versions=True, custom_filters=None) -> Dict[str, List[Dict]]:
+    def get_many_lc(cls, prms: [str], client_id: int, combined_versions=True,
+                    custom_filters=None,
+                    combined_by=('prm',), order_by=('-version',)) -> Dict[str, List[Dict]]:
         """
         Get many prms from cache
         Args:
             prms: list of prms
             client_id: int, client's id
             combined_versions: bool, if multiple versions exists we combine them (default True)
+            custom_filters: dict used in filter
+            combined_by: set of attributes to bombined by
+            order_by: set of attributes for ordering load_curves before combine_first
         Returns:
             Dict[str, List[Dict]]
         """
         if custom_filters is None:
             custom_filters = {}
-        qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters).order_by('-version')
+        qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters).order_by(*order_by)
         results = defaultdict(lambda: [])
         invalid_ids = []
         for entry in qs:
@@ -185,16 +179,28 @@ class Store(models.Model):
             logger.info(f'data is malformed, for ids {invalid_ids}')
             cls.objects.filter(id__in=invalid_ids).delete()
 
+        cleared_combined_by = set([attr for attr in combined_by])
+        ds_combined_dict = defaultdict(lambda: defaultdict(lambda: None))
         if len(results) > 0 and combined_versions:
             for prm, entries in results.items():
-                ds_combined = ts_combine_first([e['data'] for e in entries])
-                entries[0]['data'] = ds_combined
-                results[prm] = entries[0:1]
+                for e in entries:
+                    key = str([e[attr] for attr in cleared_combined_by])
+                    if ds_combined_dict[prm][key] is None:
+                        ds_combined_dict[prm][key] = e
+                    else:
+                        ds_combined_dict[prm][key]['data'] = ts_combine_first([ds_combined_dict[prm][key]['data'], e['data']])
+            for prm in results:
+                results[prm] = list(ds_combined_dict[prm].values())
 
         return results
 
     @classmethod
-    def set_lc(cls, prm: str, value: pd.Series, client_id: int, versionning=False, attributes_to_set=None) -> None:
+    def set_lc(cls, prm: str,
+               value: pd.Series,
+               client_id: int,
+               versionning=False,
+               versionning_by=('prm',),
+               attributes_to_set=None) -> None:
         """
         Set one prm to cache
         Args:
@@ -202,6 +208,7 @@ class Store(models.Model):
             value: pd.Series
             client_id: int, client's id
             versionning: bool, if True, a new version will be saved else the load curve is replaced (default False)
+            versionning_by: set of attributes used for versionning (prm is mandatory)
             attributes_to_set: (optionnal) None or dict
         Returns:
             None
@@ -221,8 +228,9 @@ class Store(models.Model):
             if not versionning:
                 cls.objects.update_or_create(client_id=client_id, prm=prm, defaults=dict(data=v), **attributes_to_set)
             else:
-                latest_version = cls.objects.filter(client_id=client_id, prm=prm, **attributes_to_set).aggregate(Max('version'))[
-                    'version__max']
+                assert 'prm' in versionning_by
+                _filters = {'prm': prm, **{k: v for k, v in attributes_to_set.items() if k in versionning_by}}
+                latest_version = cls.objects.filter(client_id=client_id, **_filters).aggregate(Max('version'))['version__max']
                 if latest_version is not None:
                     # If there's at least one object with the same prm, increment the version
                     version = latest_version + 1
@@ -236,13 +244,16 @@ class Store(models.Model):
             raise ValueError(f'Cannot cache value of type {type(value)}, only dataframe are accepted')
 
     @classmethod
-    def set_many_lc(cls, dataseries: Dict[str, pd.Series], client_id: int, versionning=False, attributes_to_set=None) -> None:
+    def set_many_lc(cls, dataseries: Dict[str, pd.Series], client_id: int, versionning=False,
+                    versionning_by=('prm',),
+                    attributes_to_set=None) -> None:
         """
         Update prms contained in dataseries dict
         Args:
             dataseries: dict(key: pd.Series)
             client_id: int, client's id
             versionning: bool, if True, a new version will be saved for each prm else the load curve is replaced
+            versionning_by: set of attributes used for versionning (prm is mandatory)
             attributes_to_set: (optionnal) None or dict
         Returns:
             None
@@ -251,7 +262,10 @@ class Store(models.Model):
             logger.info(f'Updating cache for {list(dataseries.keys())}')
         for prm, data in dataseries.items():
             if data is not None and not data.empty:
-                cls.set_lc(prm, data, client_id, versionning=versionning, attributes_to_set=attributes_to_set)
+                cls.set_lc(prm, data, client_id,
+                           versionning=versionning,
+                           versionning_by=versionning_by,
+                           attributes_to_set=attributes_to_set)
 
     @classmethod
     def clear(cls, prms: [str], client_id: int, version=None, custom_filters=None) -> None:
@@ -297,3 +311,11 @@ class TestDataStore(Store):
     class Meta(Store.Meta):
         abstract = False
         app_label = 'hostore'
+
+
+class TestDataStoreWithAttribute(Store):
+    year = models.IntegerField()
+    class Meta(Store.Meta):
+        abstract = False
+        app_label = 'hostore'
+        unique_together = ('prm', 'client_id', 'year', 'created_at')
