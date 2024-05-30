@@ -97,7 +97,7 @@ class Store(models.Model):
     def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None,
                combined_by=('prm',),
                order_by=('-version',),
-               combined_delay=pd.Timedelta(days=1)) -> List[Dict]:
+               combined_delay=pd.Timedelta(days=0)) -> List[Dict]:
         """
         Get the prm load curve
         Args:
@@ -150,7 +150,7 @@ class Store(models.Model):
                     custom_filters=None,
                     combined_by=('prm',),
                     order_by=('-version',),
-                    combined_delay=pd.Timedelta(days=1)) -> Dict[str, List[Dict]]:
+                    combined_delay=pd.Timedelta(days=0)) -> Dict[str, List[Dict]]:
         """
         Get many prms from cache
         Args:
