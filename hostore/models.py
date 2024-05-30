@@ -97,7 +97,7 @@ class Store(models.Model):
     def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None,
                combined_by=('prm',),
                order_by=('-version',),
-               combined_delay=pd.Timedelta(days=0)) -> List[Dict]:
+               combined_delay=None) -> List[Dict]:
         """
         Get the prm load curve
         Args:
@@ -108,6 +108,7 @@ class Store(models.Model):
             custom_filters: (optionnal) None or dict
             combined_by: set of attributes to bombined by
             order_by: set of attributes for ordering load_curves before combine_first
+            combined_delay : pd.Timedelta object, optional to slice the beginning of the time series
         Returns:
             List[Dict]
         """
@@ -137,7 +138,8 @@ class Store(models.Model):
         if len(entries) > 0 and combined_versions:
             for e in entries:
                 key = str([e[attr] for attr in cleared_combined_by])
-                e['data'] = slice_with_delay(e['data'], combined_delay)
+                if combined_delay is not None:
+                    e['data'] = slice_with_delay(e['data'], combined_delay)
                 if ds_combined_dict[key] is None:
                     ds_combined_dict[key] = e
                 else:
@@ -150,7 +152,7 @@ class Store(models.Model):
                     custom_filters=None,
                     combined_by=('prm',),
                     order_by=('-version',),
-                    combined_delay=pd.Timedelta(days=0)) -> Dict[str, List[Dict]]:
+                    combined_delay=None) -> Dict[str, List[Dict]]:
         """
         Get many prms from cache
         Args:
@@ -160,6 +162,7 @@ class Store(models.Model):
             custom_filters: dict used in filter
             combined_by: set of attributes to bombined by
             order_by: set of attributes for ordering load_curves before combine_first
+            combined_delay : pd.Timedelta object, optional to slice the beginning of the time series
         Returns:
             Dict[str, List[Dict]]
         """
@@ -190,7 +193,8 @@ class Store(models.Model):
             for prm, entries in results.items():
                 for e in entries:
                     key = str([e[attr] for attr in cleared_combined_by])
-                    e['data'] = slice_with_delay(e['data'], combined_delay)
+                    if combined_delay is not None:
+                        e['data'] = slice_with_delay(e['data'], combined_delay)
                     if ds_combined_dict[prm][key] is None:
                         ds_combined_dict[prm][key] = e
                     else:
