@@ -235,23 +235,21 @@ class Store(models.Model):
             buf = io.BytesIO()
             df.to_feather(buf, compression='lz4')
             v = buf.getvalue()
+
             if not versionning:
                 cls.objects.update_or_create(client_id=client_id, prm=prm, defaults=dict(data=v), **attributes_to_set)
             else:
                 assert 'prm' in versionning_by
                 _filters = {'prm': prm, **{k: v for k, v in attributes_to_set.items() if k in versionning_by}}
+
                 latest_version = cls.objects.filter(client_id=client_id, **_filters).aggregate(Max('version'))['version__max']
-                if latest_version is not None:
-                    # If there's at least one object with the same prm, increment the version
-                    version = latest_version + 1
-                else:
-                    # If there are no objects with the same prm, start with version 0
-                    version = 0
-                logger.info(f"version to insert {version}")
+                # If there's at least one object with the same prm, increment the version
+                # If there are no objects with the same prm, start with version 0
+                version = latest_version + 1 if latest_version is not None else 0
                 cls.objects.create(client_id=client_id, prm=prm, data=v, version=version, **attributes_to_set)
             logger.info(f'SET prm {prm} in cache DONE')
         else:
-            raise ValueError(f'Cannot cache value of type {type(value)}, only dataframe are accepted')
+            raise ValueError(f'Cannot cache value of type {type(value)}, only pandas Series is accepted')
 
     @classmethod
     def set_many_lc(cls, dataseries: Dict[str, pd.Series], client_id: int, versionning=False,
@@ -268,8 +266,9 @@ class Store(models.Model):
         Returns:
             None
         """
-        if len(dataseries) > 0:
+        if not dataseries:
             logger.info(f'Updating cache for {list(dataseries.keys())}')
+
         for prm, data in dataseries.items():
             if data is not None and not data.empty:
                 cls.set_lc(prm, data, client_id,
