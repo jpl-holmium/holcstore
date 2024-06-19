@@ -27,7 +27,7 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
             # add your meta
 ```
 
-### Usage
+### Basic Usage
 
 #### Saving a timeserie to database
 
