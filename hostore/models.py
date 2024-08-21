@@ -2,7 +2,7 @@ import datetime as dt
 import io
 import logging
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, Union
 
 import pandas as pd
 from django.db import models
@@ -341,13 +341,13 @@ class TimeseriesStore(models.Model):
         indexes = [models.Index(fields=['version']), ]
 
     @classmethod
-    def get_ts(cls, ts_attributes: dict) -> List[Dict]:
+    def get_ts(cls, ts_attributes: dict, flat=False) -> Union[pd.Series, List[Dict]]:
         """
         Get the timeseries matching ts_attributes
 
         Args:
             ts_attributes: dict : specify attributes to get
-
+            flat: bool : whether the query must return only one results (and return only data serie)
         Returns:
             List[Dict]
         """
@@ -361,16 +361,19 @@ class TimeseriesStore(models.Model):
             entry_dict = vars(entry)
             reader = BufferReader(entry_dict['data'])
             ds = pd.read_feather(reader)
-            if 'index' in ds.columns:
-                ds.set_index('index', inplace=True)
-            else:
-                logger.warning(f'corrupted data for key {full_key} : deleting')
-                entry.delete()
             entry_dict['data'] = ds.iloc[:, 0]
             entries.append(entry_dict)
 
         logger.debug(f'GET key {full_key} in cache DONE')
-        return entries
+        if flat:
+            if len(entries) == 1:
+                return entries[0]['data']
+            elif len(entries) == 0:
+                raise ValueError(f'No serie found for key {full_key}')
+            else:
+                raise ValueError(f'Multiple series found for key {full_key}')
+        else:
+            return entries
 
     @classmethod
     def set_ts(cls,
@@ -395,7 +398,6 @@ class TimeseriesStore(models.Model):
                 logger.warning(f'CACHE : Key {full_key} is ignored because data is null')
                 return
             df = ds_ts.to_frame(name=full_key)
-            df.reset_index(inplace=True, names=['index'])
             buf = io.BytesIO()
             df.to_feather(buf, compression='lz4')
             v = buf.getvalue()
