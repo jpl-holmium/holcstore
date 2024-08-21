@@ -333,12 +333,11 @@ class TestDataStoreWithAttribute(Store):
 
 class TimeseriesStore(models.Model):
     data = models.BinaryField(blank=True, null=True)
-    version = models.IntegerField(default=0)
 
     class Meta:
         abstract = True
-        unique_together = ('version', )
-        indexes = [models.Index(fields=['version']), ]
+        unique_together = ('data', )  # must be customized
+        indexes = [models.Index(fields=['data']), ]  # must be customized
 
     @classmethod
     def get_ts(cls, ts_attributes: dict, flat=False) -> Union[pd.Series, List[Dict]]:
@@ -347,7 +346,8 @@ class TimeseriesStore(models.Model):
 
         Args:
             ts_attributes: dict : specify attributes to get
-            flat: bool : whether the query must return only one results (and return only data serie)
+            flat: bool : whether the query must return only one results (and return only data serie). when using flat
+            option, there must be one and only one matching result
         Returns:
             List[Dict]
         """
@@ -411,8 +411,7 @@ class TimeseriesStore(models.Model):
         """
         Method to clear multiple prm from cache
         Args:
-            version: version id to delete
-            custom_filters: (optionnal) None or dict
+            custom_filters: dict
         Returns:
             None
         """
@@ -427,4 +426,4 @@ class TestTimeseriesStoreWithAttribute(TimeseriesStore):
     class Meta(TimeseriesStore.Meta):
         abstract = False
         app_label = 'hostore'
-        unique_together = ('version', 'year', 'kind')
+        unique_together = ('year', 'kind')
