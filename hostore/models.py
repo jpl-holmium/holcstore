@@ -329,3 +329,100 @@ class TestDataStoreWithAttribute(Store):
         abstract = False
         app_label = 'hostore'
         unique_together = ('prm', 'client_id', 'year', 'created_at')
+
+
+class TimeseriesStore(models.Model):
+    data = models.BinaryField(blank=True, null=True)
+    version = models.IntegerField(default=0)
+
+    class Meta:
+        abstract = True
+        unique_together = ('version', )
+        indexes = [models.Index(fields=['version']), ]
+
+    @classmethod
+    def get_ts(cls, ts_attributes: dict) -> List[Dict]:
+        """
+        Get the timeseries matching ts_attributes
+
+        Args:
+            ts_attributes: dict : specify attributes to get
+
+        Returns:
+            List[Dict]
+        """
+        full_key = repr(ts_attributes)
+        logger.debug(f'GET key {full_key} in cache')
+
+        qs = cls.objects.filter(**ts_attributes)
+
+        entries = []
+        for entry in qs:
+            entry_dict = vars(entry)
+            reader = BufferReader(entry_dict['data'])
+            ds = pd.read_feather(reader)
+            if 'index' in ds.columns:
+                ds.set_index('index', inplace=True)
+            else:
+                logger.warning(f'corrupted data for key {full_key} : deleting')
+                entry.delete()
+            entry_dict['data'] = ds.iloc[:, 0]
+            entries.append(entry_dict)
+
+        logger.debug(f'GET key {full_key} in cache DONE')
+        return entries
+
+    @classmethod
+    def set_ts(cls,
+               ts_attributes: dict,
+               ds_ts: pd.Series) -> None:
+        """
+        Set one timeserie with ts_attributes keys
+
+        Args:
+            ts_attributes: dict : specify attributes to set
+            ds_ts: pd.Series
+        Returns:
+            None
+        """
+        if ts_attributes is None:
+            raise ValueError(f'ts_attributes is None')
+
+        full_key = repr(ts_attributes)
+        logger.debug(f'SET key {full_key} in cache')
+        if isinstance(ds_ts, pd.Series):
+            if ds_ts.isnull().all():
+                logger.warning(f'CACHE : Key {full_key} is ignored because data is null')
+                return
+            df = ds_ts.to_frame(name=full_key)
+            df.reset_index(inplace=True, names=['index'])
+            buf = io.BytesIO()
+            df.to_feather(buf, compression='lz4')
+            v = buf.getvalue()
+            cls.objects.update_or_create(defaults=dict(data=v), **ts_attributes)
+            logger.debug(f'SET key {full_key} in cache DONE')
+        else:
+            raise ValueError(f'Cannot cache value of type {type(ds_ts)}, only pd.Series are accepted')
+
+    @classmethod
+    def clear(cls, custom_filters) -> None:
+        """
+        Method to clear multiple prm from cache
+        Args:
+            version: version id to delete
+            custom_filters: (optionnal) None or dict
+        Returns:
+            None
+        """
+        qs = cls.objects.filter(**custom_filters)
+        qs.delete()
+
+
+class TestTimeseriesStoreWithAttribute(TimeseriesStore):
+    year = models.IntegerField()
+    kind = models.CharField(max_length=100)
+
+    class Meta(TimeseriesStore.Meta):
+        abstract = False
+        app_label = 'hostore'
+        unique_together = ('version', 'year', 'kind')
