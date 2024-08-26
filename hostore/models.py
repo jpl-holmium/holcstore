@@ -7,6 +7,7 @@ from typing import List, Dict, Union
 import pandas as pd
 from django.db import models
 from django.db.models import Max
+from packaging.version import Version
 from pyarrow import BufferReader
 
 from .manager import StoreQuerySet
@@ -14,6 +15,8 @@ from .utils.timeseries import ts_combine_first, check_ts_completeness
 from .utils.utils import chunks, slice_with_delay
 
 logger = logging.getLogger(__name__)
+# below this version of pandas we must remove datetime index from the serie to be feathered
+MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX = '2.2.0'
 
 
 class Store(models.Model):
@@ -364,8 +367,12 @@ class TimeseriesStore(models.Model):
         for entry in qs:
             entry_dict = vars(entry)
             reader = BufferReader(entry_dict['data'])
-            ds = pd.read_feather(reader)
-            entry_dict['data'] = ds.iloc[:, 0]
+            df = pd.read_feather(reader)
+            # fix feather index
+            if 'index' in df.columns:
+                df.set_index('index', inplace=True)
+
+            entry_dict['data'] = df.iloc[:, 0]
             entries.append(entry_dict)
 
         logger.debug(f'GET key {full_key} in cache DONE')
@@ -414,7 +421,14 @@ class TimeseriesStore(models.Model):
         else:
             ds_ts_saved = ds_ts
 
+        # pandas to feather
         df = ds_ts_saved.to_frame(name='name')
+
+        # fix feather index
+        if Version(pd.__version__) < Version(MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX):
+            # remove index from serie
+            df.reset_index(inplace=True, names=['index'])
+
         buf = io.BytesIO()
         df.to_feather(buf, compression='lz4')
         v = buf.getvalue()
