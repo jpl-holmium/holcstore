@@ -1,8 +1,3 @@
-### next
-- better scrolling behaviors - Fix #419
-
-<a name="v1.6.2"></a>
-
 ### v0.3.0 - 2024-08-26
 - Added TimeseriesStore : simple store for generic time series (generic multiple keys indexing)
 
