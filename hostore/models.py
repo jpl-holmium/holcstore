@@ -340,7 +340,7 @@ class TimeseriesStore(models.Model):
         indexes = [models.Index(fields=['data']), ]  # must be customized
 
     @classmethod
-    def get_ts(cls, ts_attributes: dict, flat=False) -> Union[pd.Series, List[Dict]]:
+    def get_ts(cls, ts_attributes: dict, flat=False, _qs=None) -> Union[pd.Series, List[Dict]]:
         """
         Get the timeseries matching ts_attributes
 
@@ -348,13 +348,17 @@ class TimeseriesStore(models.Model):
             ts_attributes: dict : specify attributes to get
             flat: bool : whether the query must return only one results (and return only data serie). when using flat
             option, there must be one and only one matching result
+            _qs : private argument to pass ts_attributes queryset
         Returns:
             List[Dict]
         """
         full_key = repr(ts_attributes)
         logger.debug(f'GET key {full_key} in cache')
 
-        qs = cls.objects.filter(**ts_attributes)
+        if _qs is not None:
+            qs = _qs
+        else:
+            qs = cls.objects.filter(**ts_attributes)
 
         entries = []
         for entry in qs:
@@ -376,15 +380,14 @@ class TimeseriesStore(models.Model):
             return entries
 
     @classmethod
-    def set_ts(cls,
-               ts_attributes: dict,
-               ds_ts: pd.Series) -> None:
+    def set_ts(cls, ts_attributes: dict, ds_ts: pd.Series, update=False) -> None:
         """
         Set one timeserie with ts_attributes keys
 
         Args:
             ts_attributes: dict : specify attributes to set
             ds_ts: pd.Series
+            update: bool : if True, allow to update an existing ts (combine first existing and new one)
         Returns:
             None
         """
@@ -393,18 +396,30 @@ class TimeseriesStore(models.Model):
 
         full_key = repr(ts_attributes)
         logger.debug(f'SET key {full_key} in cache')
-        if isinstance(ds_ts, pd.Series):
-            if ds_ts.isnull().all():
-                logger.warning(f'CACHE : Key {full_key} is ignored because data is null')
-                return
-            df = ds_ts.to_frame(name=full_key)
-            buf = io.BytesIO()
-            df.to_feather(buf, compression='lz4')
-            v = buf.getvalue()
-            cls.objects.update_or_create(defaults=dict(data=v), **ts_attributes)
-            logger.debug(f'SET key {full_key} in cache DONE')
-        else:
+
+        if not isinstance(ds_ts, pd.Series):
             raise ValueError(f'Cannot cache value of type {type(ds_ts)}, only pd.Series are accepted')
+
+        if ds_ts.isnull().all():
+            logger.warning(f'CACHE : Key {full_key} is ignored because data is null')
+            return
+
+        qs = cls.objects.filter(**ts_attributes)
+        if qs.exists():
+            if update:
+                ds_ts_existing = cls.get_ts(ts_attributes, flat=True, _qs=qs)
+                ds_ts_saved = ts_combine_first([ds_ts, ds_ts_existing])
+            else:
+                raise ValueError(f'Trying save over existing ts without update option: {ts_attributes}')
+        else:
+            ds_ts_saved = ds_ts
+
+        df = ds_ts_saved.to_frame(name='name')
+        buf = io.BytesIO()
+        df.to_feather(buf, compression='lz4')
+        v = buf.getvalue()
+        cls.objects.update_or_create(defaults=dict(data=v), **ts_attributes)
+        logger.debug(f'SET key {full_key} in cache DONE')
 
     @classmethod
     def clear(cls, custom_filters) -> None:
