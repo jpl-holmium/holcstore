@@ -87,7 +87,7 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
 ## Basic Usage : TimeseriesStore class
 
 ### Define your class in models.py 
-```
+```python
 class MyTimeseriesStore(TimeseriesStore):
     year = models.IntegerField()
     kind = models.CharField(max_length=100)
@@ -96,12 +96,11 @@ class MyTimeseriesStore(TimeseriesStore):
         abstract = False
         app_label = 'hostore'
         unique_together = ('year', 'kind')
-
 ```
 
 
 ### Usage samples
-```
+```python
 # specify attributes to set
 ts_attrs = dict(year=2020, kind='a')
 
