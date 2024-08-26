@@ -128,11 +128,10 @@ class Store(models.Model):
             entry_dict = vars(entry)
             reader = BufferReader(entry_dict['data'])
             ds = pd.read_feather(reader)
+            # fix feather index
             if 'index' in ds.columns:
                 ds.set_index('index', inplace=True)
-            else:
-                logger.info(f'data is malformed, remove key {prm}')
-                entry.delete()
+
             entry_dict['data'] = ds.iloc[:, 0]
             entries.append(entry_dict)
 
@@ -173,22 +172,15 @@ class Store(models.Model):
             custom_filters = {}
         qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters).order_by(*order_by)
         results = defaultdict(lambda: [])
-        invalid_ids = []
         for entry in qs:
             reader = BufferReader(entry.data)
             ds = pd.read_feather(reader)
-            try:
+            # fix feather index
+            if 'index' in ds.columns:
                 ds.set_index('index', inplace=True)
-            except KeyError:
-                invalid_ids.append(entry.id)
-                continue
             entry_dict = vars(entry)
             entry_dict['data'] = ds.iloc[:, 0]
             results[entry.prm].append(entry_dict)
-
-        if len(invalid_ids) > 0:
-            logger.info(f'data is malformed, for ids {invalid_ids}')
-            cls.objects.filter(id__in=invalid_ids).delete()
 
         cleared_combined_by = set([attr for attr in combined_by])
         ds_combined_dict = defaultdict(lambda: defaultdict(lambda: None))
@@ -234,7 +226,9 @@ class Store(models.Model):
                 logger.warning(f'CACHE : Key {prm} is ignored because data is null')
                 return
             df = value.to_frame(name=prm)
-            df.reset_index(inplace=True, names=['index'])
+            # fix feather index
+            if Version(pd.__version__) < Version(MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX):
+                df.reset_index(inplace=True, names=['index'])
             buf = io.BytesIO()
             df.to_feather(buf, compression='lz4')
             v = buf.getvalue()
