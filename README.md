@@ -93,8 +93,6 @@ class MyTimeseriesStore(TimeseriesStore):
     kind = models.CharField(max_length=100)
 
     class Meta(TimeseriesStore.Meta):
-        abstract = False
-        app_label = 'hostore'
         unique_together = ('year', 'kind')
 ```
 
