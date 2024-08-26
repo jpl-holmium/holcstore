@@ -2,11 +2,12 @@ import datetime as dt
 import io
 import logging
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, Union
 
 import pandas as pd
 from django.db import models
 from django.db.models import Max
+from packaging.version import Version
 from pyarrow import BufferReader
 
 from .manager import StoreQuerySet
@@ -14,6 +15,8 @@ from .utils.timeseries import ts_combine_first, check_ts_completeness
 from .utils.utils import chunks, slice_with_delay
 
 logger = logging.getLogger(__name__)
+# below this version of pandas we must remove datetime index from the serie to be feathered
+MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX = '2.2.0'
 
 
 class Store(models.Model):
@@ -125,11 +128,10 @@ class Store(models.Model):
             entry_dict = vars(entry)
             reader = BufferReader(entry_dict['data'])
             ds = pd.read_feather(reader)
+            # fix feather index
             if 'index' in ds.columns:
                 ds.set_index('index', inplace=True)
-            else:
-                logger.info(f'data is malformed, remove key {prm}')
-                entry.delete()
+
             entry_dict['data'] = ds.iloc[:, 0]
             entries.append(entry_dict)
 
@@ -170,22 +172,15 @@ class Store(models.Model):
             custom_filters = {}
         qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters).order_by(*order_by)
         results = defaultdict(lambda: [])
-        invalid_ids = []
         for entry in qs:
             reader = BufferReader(entry.data)
             ds = pd.read_feather(reader)
-            try:
+            # fix feather index
+            if 'index' in ds.columns:
                 ds.set_index('index', inplace=True)
-            except KeyError:
-                invalid_ids.append(entry.id)
-                continue
             entry_dict = vars(entry)
             entry_dict['data'] = ds.iloc[:, 0]
             results[entry.prm].append(entry_dict)
-
-        if len(invalid_ids) > 0:
-            logger.info(f'data is malformed, for ids {invalid_ids}')
-            cls.objects.filter(id__in=invalid_ids).delete()
 
         cleared_combined_by = set([attr for attr in combined_by])
         ds_combined_dict = defaultdict(lambda: defaultdict(lambda: None))
@@ -231,7 +226,9 @@ class Store(models.Model):
                 logger.warning(f'CACHE : Key {prm} is ignored because data is null')
                 return
             df = value.to_frame(name=prm)
-            df.reset_index(inplace=True, names=['index'])
+            # fix feather index
+            if Version(pd.__version__) < Version(MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX):
+                df.reset_index(inplace=True, names=['index'])
             buf = io.BytesIO()
             df.to_feather(buf, compression='lz4')
             v = buf.getvalue()
@@ -329,3 +326,127 @@ class TestDataStoreWithAttribute(Store):
         abstract = False
         app_label = 'hostore'
         unique_together = ('prm', 'client_id', 'year', 'created_at')
+
+
+class TimeseriesStore(models.Model):
+    data = models.BinaryField(blank=True, null=True)
+
+    class Meta:
+        abstract = True
+        unique_together = ('data', )  # must be customized
+        indexes = [models.Index(fields=['data']), ]  # must be customized
+
+    @classmethod
+    def get_ts(cls, ts_attributes: dict, flat=False, _qs=None) -> Union[pd.Series, List[Dict]]:
+        """
+        Get the timeseries matching ts_attributes
+
+        Args:
+            ts_attributes: dict : specify attributes to get
+            flat: bool : whether the query must return only one results (and return only data serie). when using flat
+            option, there must be one and only one matching result
+            _qs : private argument to pass ts_attributes queryset
+        Returns:
+            List[Dict]
+        """
+        full_key = repr(ts_attributes)
+        logger.debug(f'GET key {full_key} in cache')
+
+        if _qs is not None:
+            qs = _qs
+        else:
+            qs = cls.objects.filter(**ts_attributes)
+
+        entries = []
+        for entry in qs:
+            entry_dict = vars(entry)
+            reader = BufferReader(entry_dict['data'])
+            df = pd.read_feather(reader)
+            # fix feather index
+            if 'index' in df.columns:
+                df.set_index('index', inplace=True)
+
+            entry_dict['data'] = df.iloc[:, 0]
+            entries.append(entry_dict)
+
+        logger.debug(f'GET key {full_key} in cache DONE')
+        if flat:
+            if len(entries) == 1:
+                return entries[0]['data']
+            elif len(entries) == 0:
+                raise ValueError(f'No serie found for key {full_key}')
+            else:
+                raise ValueError(f'Multiple series found for key {full_key}')
+        else:
+            return entries
+
+    @classmethod
+    def set_ts(cls, ts_attributes: dict, ds_ts: pd.Series, update=False) -> None:
+        """
+        Set one timeserie with ts_attributes keys
+
+        Args:
+            ts_attributes: dict : specify attributes to set
+            ds_ts: pd.Series
+            update: bool : if True, allow to update an existing ts (combine first existing and new one)
+        Returns:
+            None
+        """
+        if ts_attributes is None:
+            raise ValueError(f'ts_attributes is None')
+
+        full_key = repr(ts_attributes)
+        logger.debug(f'SET key {full_key} in cache')
+
+        if not isinstance(ds_ts, pd.Series):
+            raise ValueError(f'Cannot cache value of type {type(ds_ts)}, only pd.Series are accepted')
+
+        if ds_ts.isnull().all():
+            logger.warning(f'CACHE : Key {full_key} is ignored because data is null')
+            return
+
+        qs = cls.objects.filter(**ts_attributes)
+        if qs.exists():
+            if update:
+                ds_ts_existing = cls.get_ts(ts_attributes, flat=True, _qs=qs)
+                ds_ts_saved = ts_combine_first([ds_ts, ds_ts_existing])
+            else:
+                raise ValueError(f'Trying save over existing ts without update option: {ts_attributes}')
+        else:
+            ds_ts_saved = ds_ts
+
+        # pandas to feather
+        df = ds_ts_saved.to_frame(name='name')
+
+        # fix feather index
+        if Version(pd.__version__) < Version(MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX):
+            # remove index from serie
+            df.reset_index(inplace=True, names=['index'])
+
+        buf = io.BytesIO()
+        df.to_feather(buf, compression='lz4')
+        v = buf.getvalue()
+        cls.objects.update_or_create(defaults=dict(data=v), **ts_attributes)
+        logger.debug(f'SET key {full_key} in cache DONE')
+
+    @classmethod
+    def clear(cls, custom_filters) -> None:
+        """
+        Method to clear multiple prm from cache
+        Args:
+            custom_filters: dict
+        Returns:
+            None
+        """
+        qs = cls.objects.filter(**custom_filters)
+        qs.delete()
+
+
+class TestTimeseriesStoreWithAttribute(TimeseriesStore):
+    year = models.IntegerField()
+    kind = models.CharField(max_length=100)
+
+    class Meta(TimeseriesStore.Meta):
+        abstract = False
+        app_label = 'hostore'
+        unique_together = ('year', 'kind')

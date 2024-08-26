@@ -4,8 +4,6 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
 
 ## Getting Started
 
-### Prerequisites
-
 1. Add "holcstore" to your INSTALLED_APPS setting like this
 ```python
     INSTALLED_APPS = [
@@ -27,7 +25,7 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
             # add your meta
 ```
 
-### Basic Usage
+## Basic Usage : Store class
 
 #### Saving a timeserie to database
 
@@ -84,6 +82,44 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
     
     # If you want to retreive a specific version
     datas = YourStore.get_lc(key, client_id, version=1)
+```
+
+## Basic Usage : TimeseriesStore class
+
+### Define your class in models.py 
+```
+class MyTimeseriesStore(TimeseriesStore):
+    year = models.IntegerField()
+    kind = models.CharField(max_length=100)
+
+    class Meta(TimeseriesStore.Meta):
+        abstract = False
+        app_label = 'hostore'
+        unique_together = ('year', 'kind')
+
+```
+
+
+### Usage samples
+```
+# specify attributes to set
+ts_attrs = dict(year=2020, kind='a')
+
+# build a timeserie 
+ds_ts = pd.Series(...)  
+
+# set timeserie to db
+MyTimeseriesStore.set_ts(ts_attrs, ds_ts)
+
+# update existing timeserie in db (will combine ds_ts + ds_ts_v2, giving priority to ds_ts_v2 datas)
+MyTimeseriesStore.set_ts(ts_attrs, ds_ts_v2, update=True)
+
+# get timeserie from db if unique match
+ds_ts = MyTimeseriesStore.get_ts(ts_attrs, flat=True)
+
+# get timeseries from db if multiple match
+datas = MyTimeseriesStore.get_ts(ts_attrs)
+ds_ts1 = datas[0]['data']
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

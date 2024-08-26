@@ -21,36 +21,9 @@ class HoCacheTestCase(TestCase):
         self.test_data_2 = self.test_data * 2
 
         # Convert test data to a binary format
-        df = self.test_data.to_frame(name=self.test_prm)
-        df.reset_index(inplace=True, names=['index'])
-        buf = io.BytesIO()
-        df.to_feather(buf, compression='lz4')
-        self.test_binary_data = buf.getvalue()
-
-        TestDataStore.objects.create(
-            prm=self.test_prm,
-            client_id=self.test_client_id,
-            data=self.test_binary_data
-        )
-
-        df = self.test_data_2.to_frame(name=self.test_prm)
-        df.reset_index(inplace=True, names=['index'])
-        buf = io.BytesIO()
-        df.to_feather(buf, compression='lz4')
-        self.test_binary_data_2 = buf.getvalue()
-
-        TestDataStore.objects.create(
-            prm=self.test_prm_2,
-            client_id=self.test_client_id,
-            data=self.test_binary_data,
-            version=0
-        )
-        TestDataStore.objects.create(
-            prm=self.test_prm_2,
-            client_id=self.test_client_id,
-            data=self.test_binary_data_2,
-            version=1
-        )
+        TestDataStore.set_lc(self.test_prm, self.test_data, self.test_client_id)
+        TestDataStore.set_lc(self.test_prm_2, self.test_data, self.test_client_id, versionning=True)
+        TestDataStore.set_lc(self.test_prm_2, self.test_data_2, self.test_client_id, versionning=True)
 
     def test_get_lc(self):
         # Test the get_lc method
