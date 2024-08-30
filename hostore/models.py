@@ -381,7 +381,7 @@ class TimeseriesStore(models.Model):
             return entries
 
     @classmethod
-    def set_ts(cls, ts_attributes: dict, ds_ts: pd.Series, update=False) -> None:
+    def set_ts(cls, ts_attributes: dict, ds_ts: pd.Series, update=False, replace=False) -> None:
         """
         Set one timeserie with ts_attributes keys
 
@@ -389,9 +389,13 @@ class TimeseriesStore(models.Model):
             ts_attributes: dict : specify attributes to set
             ds_ts: pd.Series
             update: bool : if True, allow to update an existing ts (combine first existing and new one)
+            replace: bool : if True, allow to replace an existing ts
         Returns:
             None
         """
+        if update and replace:
+            raise ValueError('update and replace are mutually exclusive')
+
         if ts_attributes is None:
             raise ValueError(f'ts_attributes is None')
 
@@ -410,8 +414,11 @@ class TimeseriesStore(models.Model):
             if update:
                 ds_ts_existing = cls.get_ts(ts_attributes, flat=True, _qs=qs)
                 ds_ts_saved = ts_combine_first([ds_ts, ds_ts_existing])
+            elif replace:
+                cls.clear(ts_attributes)
+                ds_ts_saved = ds_ts
             else:
-                raise ValueError(f'Trying save over existing ts without update option: {ts_attributes}')
+                raise ValueError(f'Trying save over existing ts without update or replace option: {ts_attributes}')
         else:
             ds_ts_saved = ds_ts
 

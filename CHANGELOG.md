@@ -1,3 +1,6 @@
+### v0.3.1 - 2024-08-30
+- Added TimeseriesStore.set_ts replace kwarg : allow to replace existing serie
+
 ### v0.3.0 - 2024-08-26
 - Added TimeseriesStore : simple store for generic time series (generic multiple keys indexing)
 

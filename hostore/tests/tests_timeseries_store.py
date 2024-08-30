@@ -97,6 +97,21 @@ class TimeseriesCacheTestCase(TestCase):
         data = TestTimeseriesStoreWithAttribute.get_ts(ts_attrs_y_2010_kind_wout_upd)
         pd.testing.assert_series_equal(data[0]['data'], ds_y_2010_kind_wout_upd0, check_names=False, check_freq=False)
 
+    def test_set_with_replace(self):
+        ts_attrs_y_2010_kind_with_replace = dict(year=2010, kind='with_replace')
+
+        # set init
+        ds_y_2010_kind_with_replace0 = gen_serie("2010-01-01 00:00:00+00:00", "2010-01-01 02:00:00+00:00", [1, 2, 3])
+        TestTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2010_kind_with_replace, ds_y_2010_kind_with_replace0)
+
+        # set replace
+        ds_y_2010_kind_with_replace1 = gen_serie("2010-01-01 02:00:00+00:00", "2010-01-01 05:00:00+00:00", [999, 10, 20, 30])
+        TestTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2010_kind_with_replace, ds_y_2010_kind_with_replace1, replace=True)
+
+        # test we get last data
+        ds = TestTimeseriesStoreWithAttribute.get_ts(ts_attrs_y_2010_kind_with_replace, flat=True)
+        pd.testing.assert_series_equal(ds, ds_y_2010_kind_with_replace1, check_names=False, check_freq=False)
+
     def test_set_with_update(self):
         ts_attrs_y_2010_kind_with_upd = dict(year=2010, kind='with_upd')
 
