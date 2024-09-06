@@ -336,6 +336,40 @@ class TimeseriesStore(models.Model):
         unique_together = ('data', )  # must be customized
         indexes = [models.Index(fields=['data']), ]  # must be customized
 
+    @property
+    def decoded_ts_data(self) -> dict:
+        """
+        Returns a dict of all entries and timeserie ('data' key)
+        """
+        entry_dict = vars(self)
+
+        # decode
+        reader = BufferReader(entry_dict['data'])
+        df = pd.read_feather(reader)
+        # fix feather index
+        if 'index' in df.columns:
+            df.set_index('index', inplace=True)
+        entry_dict['data'] = df.iloc[:, 0]
+        return entry_dict
+
+    @staticmethod
+    def encode_serie(ds):
+        """
+        Encode and compress serie
+        """
+        # pandas to feather
+        df = ds.to_frame(name='name')
+
+        # fix feather index
+        if Version(pd.__version__) < Version(MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX):
+            # remove index from serie
+            df.reset_index(inplace=True, names=['index'])
+
+        buf = io.BytesIO()
+        df.to_feather(buf, compression='lz4')
+        data = buf.getvalue()
+        return data
+
     @classmethod
     def get_ts(cls, ts_attributes: dict, flat=False, _qs=None) -> Union[pd.Series, List[Dict]]:
         """
@@ -359,15 +393,7 @@ class TimeseriesStore(models.Model):
 
         entries = []
         for entry in qs:
-            entry_dict = vars(entry)
-            reader = BufferReader(entry_dict['data'])
-            df = pd.read_feather(reader)
-            # fix feather index
-            if 'index' in df.columns:
-                df.set_index('index', inplace=True)
-
-            entry_dict['data'] = df.iloc[:, 0]
-            entries.append(entry_dict)
+            entries.append(entry.decoded_ts_data)
 
         logger.debug(f'GET key {full_key} in cache DONE')
         if flat:
@@ -422,18 +448,7 @@ class TimeseriesStore(models.Model):
         else:
             ds_ts_saved = ds_ts
 
-        # pandas to feather
-        df = ds_ts_saved.to_frame(name='name')
-
-        # fix feather index
-        if Version(pd.__version__) < Version(MIN_PANDAS_VERSION_FEATHER_SAVE_DATETIME_INDEX):
-            # remove index from serie
-            df.reset_index(inplace=True, names=['index'])
-
-        buf = io.BytesIO()
-        df.to_feather(buf, compression='lz4')
-        v = buf.getvalue()
-        cls.objects.update_or_create(defaults=dict(data=v), **ts_attributes)
+        cls.objects.update_or_create(defaults=dict(data=cls.encode_serie(ds_ts_saved)), **ts_attributes)
         logger.debug(f'SET key {full_key} in cache DONE')
 
     @classmethod

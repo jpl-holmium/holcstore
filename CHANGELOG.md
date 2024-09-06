@@ -1,3 +1,6 @@
+### v0.3.2 - 2024-09-06
+- Added TimeseriesStore encode_serie and decoded_ts_data : allow to access to decoded data from object
+
 ### v0.3.1 - 2024-08-30
 - Added TimeseriesStore.set_ts replace kwarg : allow to replace existing serie
 
