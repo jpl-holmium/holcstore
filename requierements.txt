@@ -1,6 +1,5 @@
 asgiref==3.7.2
 Django==5.0.2
-django-admin-interface==0.28.5
 pandas==2.2.0
 pip==23.3
 pyarrow==15.0.0
