@@ -1,3 +1,6 @@
+### v0.3.3 - 2024-09-06
+- Added download_timeseries_from_store admin action : download zipped timeseries content from django admin
+
 ### v0.3.2 - 2024-09-06
 - Added TimeseriesStore encode_serie and decoded_ts_data : allow to access to decoded data from object
 
