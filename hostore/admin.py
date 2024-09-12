@@ -4,7 +4,6 @@ from hostore.admin_actions import download_timeseries_from_store
 from hostore.models import TestTimeseriesStoreWithAttribute
 
 
-@admin.register(TestTimeseriesStoreWithAttribute)
 class TestTimeseriesStoreWithAttributeAdmin(admin.ModelAdmin):
     resource_classes = [TestTimeseriesStoreWithAttribute]
     list_display = ('year', 'kind', )
