@@ -1,3 +1,6 @@
+### v0.3.4 - 2024-09-12
+- Remove automatic registering of test model + add packaging in requirements.txt
+
 ### v0.3.3 - 2024-09-06
 - Added download_timeseries_from_store admin action : download zipped timeseries content from django admin
 

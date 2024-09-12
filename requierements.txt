@@ -1,5 +1,6 @@
 asgiref==3.7.2
 Django==5.0.2
+packaging==22.0
 pandas==2.2.0
 pip==23.3
 pyarrow==15.0.0
