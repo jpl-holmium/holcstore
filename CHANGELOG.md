@@ -1,3 +1,6 @@
+### v0.4.1 - 2024-09-16
+- Correct file extension for Pypi description
+
 ### v0.4.0 - 2024-09-16
 - Add classmethod find_groups to the model Store. Returns all missing intervals and the prms/keys concerned.
 
