@@ -2,4 +2,6 @@ dist/
 holcstore.egg-info/
 /.idea/
 /db.sqlite3
-*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
