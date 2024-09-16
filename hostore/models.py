@@ -11,7 +11,8 @@ from packaging.version import Version
 from pyarrow import BufferReader
 
 from .manager import StoreQuerySet
-from .utils.timeseries import ts_combine_first, check_ts_completeness
+from .utils.range.range import Range
+from .utils.timeseries import ts_combine_first, check_ts_completeness, find_constant_sequences
 from .utils.utils import chunks, slice_with_delay
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,123 @@ class Store(models.Model):
         if custom_filters is None:
             custom_filters = {}
         return cls.objects.filter(client_id=client_id, **custom_filters).count()
+
+    @classmethod
+    def find_groups(self, client_id: int, prms: [str], drr: Range,
+                    freq='30min',
+                    combined_by=('prm',),
+                    order_by=('-version',)) -> (dict, dict):
+        """
+        Groups parameters (`prms`) based on missing data ranges for a specific `client_id`
+        and the requested date range (`drr`). This method identifies time periods where
+        the data is missing or null for each parameter, and returns a grouping of those ranges.
+
+        Parameters:
+        ----------
+        client_id : int
+            The ID of the client for whom data is being retrieved.
+        prms : List[str]
+            A list of parameter names (strings) whose data availability is being checked.
+        drr : Range
+            A `Range` object representing the requested date range. Limits included []
+        freq : str, optional
+            The frequency used to detect missing data gaps, defaults to '30min'.
+        combined_by : tuple, optional
+            A tuple specifying how the data should be grouped (default is by 'prm').
+        order_by : tuple, optional
+            A tuple specifying how the data should be ordered (default is by '-version').
+
+        Returns:
+        -------
+        groups : dict
+            A dictionary where each key is a `Range` object representing a missing data
+            range, and the corresponding value is a list of parameters (`prms`) that have
+            missing data in that range.
+
+        data : dict
+            A dictionary containing the retrieved data for the provided parameters,
+            keyed by the parameter name. Each value is a list of dictionaries representing
+            the time series data for the parameter.
+
+        Raises:
+        ------
+        AssertionError
+            If more than one object is retrieved for a given parameter, which indicates
+            a problem with the data retrieval.
+
+        Notes:
+        ------
+        - The method first retrieves data using the `get_many_lc` method, combining versions
+          of the data as necessary and ordering them as per the `order_by` argument.
+        - Any parameters for which no data is found are considered "absent" and are grouped
+          under the entire requested date range (`drr`).
+        - For each parameter with available data, the method slices the data according to
+          the requested date range and identifies missing data by comparing the available
+          range (`dra`) to the requested range (`drr`).
+        - Null sequences within the time series are also identified and treated as missing
+          data gaps.
+        - Missing or null data ranges are merged into larger combined ranges to avoid
+          fragmentation, and these combined ranges are used to group parameters in the
+          `groups` dictionary.
+
+        Example:
+        --------
+        >>> groups, data = Store.find_groups(
+                client_id=123,
+                prms=['prm1', 'prm2'],
+                drr=Range(sd='2023-01-01', ed='2023-02-01'),
+                freq='30min'
+            )
+        >>> print(groups)
+        {Range(sd='2023-01-01', ed='2023-01-10'): ['param1'], Range(sd='2023-01-15', ed='2023-01-20'): ['param2']}
+        >>> print(data)
+        {'param1': [...], 'param2': [...]}
+        """
+
+        data = self.get_many_lc(prms, client_id, combined_versions=True, combined_by=combined_by, order_by=order_by,)
+
+        groups = defaultdict(lambda: [], {})
+        prms_absents = set(prms) - set(data.keys())
+
+        # All absent keys start from start_date
+        if len(prms_absents) > 0:
+            groups[drr].extend(prms_absents)
+
+        keys_to_pop = []
+        for k, objs in data.items():
+            assert len(objs) == 1
+            obj = objs[0]
+            obj['data'] = obj['data'][drr.sd:drr.ed]
+            mask_not_null = obj['data'].notnull()
+            lc = obj['data'][mask_not_null]
+            # dra : date range available
+            # drr : date range requested
+            missing_ranges = []
+            if lc.empty:
+                missing_ranges.append(drr)
+                keys_to_pop.append(k)
+            else:
+                dra = Range(lc.index.min(), lc.index.max())
+                _missing_ranges = dra.difference_missing(drr, min_delta=pd.to_timedelta(freq))
+                missing_ranges.extend(_missing_ranges)
+
+            # Find holes in not null data
+            if not mask_not_null.empty:
+                constant_seqs = find_constant_sequences(mask_not_null)
+                for (start, end), not_null in constant_seqs:
+                    if not not_null:
+                        logger.info(f"key {k}, Found a null sequence between {start} - {end}")
+                        missing_ranges.append(Range(start, end))
+
+            # To prevent multiple ranges we combine them
+            combined_ranges = Range.combine(missing_ranges)
+            for combined_range in combined_ranges:
+                groups[combined_range].append(k)
+
+        # pop keys with empty data
+        [data.pop(k) for k in keys_to_pop]
+
+        return groups, data
 
     @classmethod
     def find_holes(cls, client_id: int, sd: dt.datetime, ed: dt.datetime, freq='30min', prms: List[str] = None,

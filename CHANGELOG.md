@@ -1,3 +1,6 @@
+### v0.4.0 - 2024-09-16
+- Add classmethod find_groups to the model Store. Returns all missing intervals and the prms/keys concerned.
+
 ### v0.3.3 - 2024-09-06
 - Added download_timeseries_from_store admin action : download zipped timeseries content from django admin
 
