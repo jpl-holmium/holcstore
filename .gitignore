@@ -2,3 +2,4 @@ dist/
 holcstore.egg-info/
 /.idea/
 /db.sqlite3
+*.pyc
