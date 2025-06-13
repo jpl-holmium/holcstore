@@ -2,6 +2,7 @@ asgiref==3.7.2
 Django==5.0.2
 packaging==22.0
 pandas==2.2.0
+pandas-stubs==2.2.3.250527
 pip==23.3
 pyarrow==15.0.0
 setuptools==68.2.2

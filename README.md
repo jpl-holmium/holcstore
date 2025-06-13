@@ -1,6 +1,18 @@
-# HoLcStore
+<h1 id="readme-top">HoLcStore</h1>
 
 HoLcStore is a Django app for creating a simple TimeSeries store in your database.
+
+<!-- TOC -->
+## Table of Contents
+- [Getting Started](#getting-started)
+- [Basic Usage : Store class](#basic-usage--store-class)
+  - [Saving a timeserie to database](#saving-a-timeserie-to-database)
+  - [Saving multiple timeseries to database](#saving-multiple-timeseries-to-database)
+  - [Getting a load curve from the database](#getting-a-load-curve-from-the-database)
+- [Basic Usage : TimeseriesStore class](#basic-usage-timeseriesstore-class)
+  - [Define your class in models.py](#define-your-class-in-modelspy)
+  - [Usage samples](#usage-samples)
+<!-- /TOC -->
 
 ## Getting Started
 
@@ -25,7 +37,7 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
             # add your meta
 ```
 
-## Basic Usage : Store class
+## Basic Usage: Store class
 
 #### Saving a timeserie to database
 
@@ -84,9 +96,9 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
     datas = YourStore.get_lc(key, client_id, version=1)
 ```
 
-## Basic Usage : TimeseriesStore class
+## Basic Usage: TimeseriesStore class
 
-### Define your class in models.py 
+### Define your class in models.py
 ```python
 class MyTimeseriesStore(TimeseriesStore):
     year = models.IntegerField()
