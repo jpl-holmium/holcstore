@@ -451,8 +451,9 @@ class TimeseriesStore(models.Model):
 
     class Meta:
         abstract = True
-        unique_together = ('data', )  # must be customized
-        indexes = [models.Index(fields=['data']), ]  # must be customized
+        # todo retirer les contraintes d'unicité par défaut
+        # unique_together = ('data', )  # must be customized
+        # indexes = [models.Index(fields=['data']), ]  # must be customized
 
     @property
     def decoded_ts_data(self) -> dict:
@@ -512,8 +513,15 @@ class TimeseriesStore(models.Model):
         entries = []
         for entry in qs:
             entries.append(entry.decoded_ts_data)
-
         logger.debug(f'GET key {full_key} in cache DONE')
+
+        # todo sortir un dict des ts par propriété ? ou alors un {entry:entry.decoded_ts_data} afin de pouvoir
+        #  requêter plusieurs objets. nouvelles méthode bulk_get, bulk_set ?
+
+        # todo chunker de manière automatisée par mois / années ?
+
+        # todo requêter les séries entre 2 dates
+
         if flat:
             if len(entries) == 1:
                 return entries[0]['data']
@@ -566,6 +574,7 @@ class TimeseriesStore(models.Model):
         else:
             ds_ts_saved = ds_ts
 
+        # todo ajouter un bulk create ?
         cls.objects.update_or_create(defaults=dict(data=cls.encode_serie(ds_ts_saved)), **ts_attributes)
         logger.debug(f'SET key {full_key} in cache DONE')
 
