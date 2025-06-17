@@ -1,2 +1,2 @@
-from hostore import *
-from timeserie_store import *
+from ..models.hostore import *
+from ..models.timeserie_store import *
