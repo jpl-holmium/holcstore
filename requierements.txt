@@ -1,5 +1,6 @@
 asgiref==3.7.2
 Django==5.0.2
+lz4==4.4.4
 packaging==22.0
 pandas==2.2.0
 pandas-stubs==2.2.3.250527
