@@ -28,7 +28,7 @@ class TimeseriesChunkStore(models.Model):
     data = models.BinaryField()
 
     # Paramètres haut niveau
-    CHUNK_AXIS = ('year', 'month')   # config. par classe enfant
+    CHUNK_AXIS = ('year', 'month')   # config. par classe enfant. configs : ('year',) ('year', 'month')
     CHUNK_TZ   = 'Europe/Paris'
     ITER_CHUNK_SIZE = 500
 
