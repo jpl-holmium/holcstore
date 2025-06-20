@@ -1,8 +1,15 @@
-from django.db import models
+import logging
+from zoneinfo import ZoneInfo
+
+from django.db import models, transaction, IntegrityError
 from django.utils import timezone
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
+
+from hostore.utils.timeseries import ts_combine_first
+
+logger = logging.getLogger(__name__)
 
 
 class TimeseriesChunkStore(models.Model):
@@ -26,21 +33,27 @@ class TimeseriesChunkStore(models.Model):
     ITER_CHUNK_SIZE = 500
 
     class Meta:
+        # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_year', 'chunk_month'] au unique together
+        unique_together = ['chunk_year', 'chunk_month']
         abstract = True
 
     # ------------------ Sérialisation bas niveau ------------------
 
     @staticmethod
-    def _compress(arr: np.ndarray) -> bytes:
-        return lz4.compress(arr.tobytes())
+    def _compress(serie: pd.Series) -> (bytes, np.array):
+        arr = serie.to_numpy()
+        return lz4.compress(arr.tobytes()), arr
 
-    @staticmethod
-    def _decompress(blob: bytes, dtype: str) -> np.ndarray:
+    @classmethod
+    def _decompress(cls, row) -> pd.Series:
+        blob = row.data
+        dtype = row.dtype
         raw = lz4.decompress(blob)
-        return np.frombuffer(raw, dtype=dtype)
+        arr = np.frombuffer(raw, dtype=dtype)
+        idx = cls._rebuild_index(row, len(arr))
+        return pd.Series(arr, index=idx)
 
     # -- public --
-
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,
                update=False, replace=False):
@@ -52,6 +65,10 @@ class TimeseriesChunkStore(models.Model):
             raise ValueError('update and replace are mutuellement exclusifs.')
 
         serie = cls._normalize_index(serie)
+
+        if replace:
+            # we need to delete previous related chunks (previous serie may lay on a greater span than new one)
+            cls.objects.filter(**attrs).delete()
 
         # Découpage éventuel
         for sub in cls._chunk(serie):
@@ -69,13 +86,14 @@ class TimeseriesChunkStore(models.Model):
 
         pieces = []
         for row in qs.iterator(chunk_size=cls.ITER_CHUNK_SIZE):
-            arr = cls._decompress(row.data, row.dtype)
-            idx = cls._rebuild_index(row, len(arr))
-            pieces.append(pd.Series(arr, index=idx))
+            pieces.append(cls._decompress(row))
 
         if not pieces:
             raise ValueError('Série introuvable.')
+
         full = pd.concat(pieces).sort_index()
+        full.index = pd.to_datetime(full.index, utc=True)
+        full = full.tz_convert(str(pieces[0].index.tz))
 
         if start or end:
             full = full.loc[start:end]
@@ -84,8 +102,7 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series],
-                    keys: tuple[str, ...],
-                    update=False, replace=False):
+                    keys: tuple[str, ...]):
         """
         mapping : {(k1,k2,...): serie}
         keys    : ('version','kind',...)
@@ -96,16 +113,14 @@ class TimeseriesChunkStore(models.Model):
             serie = cls._normalize_index(serie)
             for sub in cls._chunk(serie):
                 rows.append(cls._build_row(attrs, sub))
-        cls._bulk_upsert(rows, update, replace)
+        cls._bulk_upsert(rows)
 
     @classmethod
     def yield_ts(cls, filters: dict | None = None):
         qs = cls.objects.filter(**(filters or {})).iterator(
             chunk_size=cls.ITER_CHUNK_SIZE)
         for row in qs:
-            arr = cls._decompress(row.data, row.dtype)
-            idx = cls._rebuild_index(row, len(arr))
-            yield pd.Series(arr, index=idx), row
+            yield cls._decompress(row), row
 
     # -- private helpers --
 
@@ -115,6 +130,7 @@ class TimeseriesChunkStore(models.Model):
             raise ValueError('Index doit être DatetimeIndex.')
         serie = serie.sort_index()
         if serie.index.tz is None:
+            logger.warning('Saving serie without tz may lead to inconsistent results')
             serie = serie.tz_localize(cls.CHUNK_TZ)
         else:
             serie = serie.tz_convert(cls.CHUNK_TZ)
@@ -134,12 +150,16 @@ class TimeseriesChunkStore(models.Model):
             yield sub
 
     @classmethod
-    def _build_row(cls, attrs, serie):
-        arr = serie.to_numpy()
-        compressed = cls._compress(arr)
-        first_ts = serie.index[0].tz_convert('UTC')
+    def _year_month(cls, serie):
+        first_ts = serie.index[0].tz_convert(cls.CHUNK_TZ)
         year = first_ts.year if 'year' in cls.CHUNK_AXIS else None
         month = first_ts.month if 'month' in cls.CHUNK_AXIS else None
+        return first_ts, year, month
+
+    @classmethod
+    def _build_row(cls, attrs, serie):
+        compressed, arr = cls._compress(serie)
+        first_ts, year, month = cls._year_month(serie)
         return cls(
             **attrs,
             chunk_year=year,
@@ -155,39 +175,119 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def _upsert_chunk(cls, attrs, serie, update, replace):
         row = cls._build_row(attrs, serie)
-        conflict_fields = ['version', 'kind', 'chunk_year', 'chunk_month']
+        attributes_fields = [*attrs.keys(), 'chunk_year', 'chunk_month']
+        attributes = {f: getattr(row, f) for f in attributes_fields}
+
+        if update:
+            # combine first with existing
+            qs = cls.objects.filter(**attributes)
+            if qs.count() == 0:
+                pass
+            elif qs.count() == 1:
+                row = qs.first()
+                ds_existing = cls._decompress(row)
+                ds_new = ts_combine_first([serie, ds_existing])
+                row = cls._build_row(attrs, ds_new)
+            else:
+                raise ValueError(f'Multiple chunks found for attributes {attributes} with update={update}')
+
+        # dict pour defaults
+        defaults = {
+            'start_ts': row.start_ts,
+            'length': row.length,
+            'freq': row.freq,
+            'tz': row.tz,
+            'dtype': row.dtype,
+            'data': row.data,
+        }
+
         if update or replace:
             cls.objects.update_or_create(
-                defaults=row.__dict__,
-                **{f: getattr(row, f) for f in conflict_fields}
+                defaults=defaults,
+                **attributes
             )
         else:
-            # insert‑only path
-            row.save(force_insert=True)
+            # insertion stricte
+            try:
+                with transaction.atomic(using=cls.objects.db):
+                    row.save()
+            except IntegrityError:
+                # collision => conseiller d’utiliser update=True ou replace=True
+                raise ValueError(
+                    f'Chunk déjà présent pour clés {attrs} '
+                    f'({row.chunk_year}-{row.chunk_month})'
+                )
 
     @classmethod
-    def _bulk_upsert(cls, rows, update, replace):
+    def _bulk_upsert(cls, rows):
         if not rows:
             return
-        with cls.objects.db.transaction.atomic():
+
+        with transaction.atomic():
             cls.objects.bulk_create(
-                rows, ignore_conflicts=not (update or replace))
-            # Optionnel : gérer update via SQL ON CONFLICT DO UPDATE
-            # selon le SGBD → out of scope
+                rows,
+                batch_size=1000,  # optionnel : tuning
+            )
 
     @classmethod
     def _rebuild_index(cls, row, length):
-        start = row.start_ts.astimezone(
-            timezone.pytz.timezone(row.tz))  # Dst‑safe
-        return pd.date_range(
-            start=start, periods=length, freq=row.freq, tz=row.tz)
+        start = row.start_ts.astimezone(ZoneInfo(row.tz))
+        return pd.date_range(start=start,
+                             periods=length,
+                             freq=row.freq)
+
+    # @classmethod
+    # def _filter_interval(cls, qs, start, end):
+    #     if start:
+    #         qs = qs.filter(start_ts__lte=end or start)
+    #     if end:
+    #         qs = qs.filter(start_ts__lte=end)
+    #     return qs
 
     @classmethod
     def _filter_interval(cls, qs, start, end):
-        if start:
-            qs = qs.filter(start_ts__lte=end or start)
-        if end:
-            qs = qs.filter(start_ts__lte=end)
+        """
+        Retourne les chunks qui chevauchent [start, end] (inclus).
+        start / end sont des str, datetime, ou None (timezone naïve = CHUNK_TZ).
+        """
+        if isinstance(start, str):
+            start = pd.Timestamp(start, tz=cls.CHUNK_TZ).to_pydatetime()
+        if isinstance(end, str):
+            end = pd.Timestamp(end, tz=cls.CHUNK_TZ).to_pydatetime()
+
+        # borne UTC pour comparaison directe avec start_ts
+        start_utc = start.astimezone(ZoneInfo('UTC')) if start else None
+        end_utc = end.astimezone(ZoneInfo('UTC')) if end else None
+
+        # 1) filtre rapide par année/mois si chunking activé
+        if cls.CHUNK_AXIS:
+            if start and end and start.year == end.year:
+                qs = qs.filter(chunk_year=start.year)
+            elif start and end:
+                qs = qs.filter(chunk_year__gte=start.year,
+                               chunk_year__lte=end.year)
+            elif start:
+                qs = qs.filter(chunk_year__gte=start.year)
+            elif end:
+                qs = qs.filter(chunk_year__lte=end.year)
+
+            if 'month' in cls.CHUNK_AXIS and start and end and start.year == end.year:
+                if start.month == end.month:
+                    qs = qs.filter(chunk_month=start.month)
+                else:
+                    qs = qs.filter(chunk_month__gte=start.month,
+                                   chunk_month__lte=end.month)
+
+        # 2) filtre précis sur start_ts / fin_ts
+        if start_utc:
+            qs = qs.filter(start_ts__lte=end_utc or start_utc)  # chunk commence avant fin
+        if end_utc:
+            # Un chunk se termine à start_ts + (length-1)*freq
+            qs = qs.filter(
+                start_ts__gte=start_utc or end_utc - pd.Timedelta(days=365 * 200)
+                              |
+                              Q(start_ts__lt=end_utc)
+            )
         return qs
 
 class TestTimeseriesChunkStoreWithAttributes(TimeseriesChunkStore):
