@@ -29,7 +29,7 @@ class TimeseriesChunkStore(models.Model):
 
     # Paramètres haut niveau
     CHUNK_AXIS = ('year', 'month')   # config. par classe enfant. configs : ('year',) ('year', 'month')
-    CHUNK_TZ   = 'Europe/Paris'
+    STORE_TZ   = 'Europe/Paris'
     ITER_CHUNK_SIZE = 500
 
     class Meta:
@@ -93,7 +93,7 @@ class TimeseriesChunkStore(models.Model):
 
         full = pd.concat(pieces).sort_index()
         full.index = pd.to_datetime(full.index, utc=True)
-        full = full.tz_convert(str(pieces[0].index.tz))
+        full = full.tz_convert(cls.STORE_TZ)
 
         if start or end:
             full = full.loc[start:end]
@@ -131,15 +131,18 @@ class TimeseriesChunkStore(models.Model):
         serie = serie.sort_index()
         if serie.index.tz is None:
             logger.warning('Saving serie without tz may lead to inconsistent results')
-            serie = serie.tz_localize(cls.CHUNK_TZ)
+            serie = serie.tz_localize(cls.STORE_TZ)
         else:
-            serie = serie.tz_convert(cls.CHUNK_TZ)
+            serie = serie.tz_convert(cls.STORE_TZ)
         if serie.isnull().all():
             raise ValueError('Série vide.')
         return serie
 
     @classmethod
     def _chunk(cls, serie: pd.Series):
+        if serie.isnull().any():
+            raise ValueError('Trying to chunk with nulls in serie')
+
         if not cls.CHUNK_AXIS:
             yield serie
             return
@@ -151,13 +154,15 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _year_month(cls, serie):
-        first_ts = serie.index[0].tz_convert(cls.CHUNK_TZ)
+        first_ts = serie.index[0].tz_convert(cls.STORE_TZ)
         year = first_ts.year if 'year' in cls.CHUNK_AXIS else None
         month = first_ts.month if 'month' in cls.CHUNK_AXIS else None
         return first_ts, year, month
 
     @classmethod
     def _build_row(cls, attrs, serie):
+        if serie.isnull().any():
+            raise ValueError('Trying to build row with nulls in serie')
         compressed, arr = cls._compress(serie)
         first_ts, year, month = cls._year_month(serie)
         return cls(
@@ -248,12 +253,12 @@ class TimeseriesChunkStore(models.Model):
     def _filter_interval(cls, qs, start, end):
         """
         Retourne les chunks qui chevauchent [start, end] (inclus).
-        start / end sont des str, datetime, ou None (timezone naïve = CHUNK_TZ).
+        start / end sont des str, datetime, ou None (timezone naïve = STORE_TZ).
         """
         if isinstance(start, str):
-            start = pd.Timestamp(start, tz=cls.CHUNK_TZ).to_pydatetime()
+            start = pd.Timestamp(start, tz=cls.STORE_TZ).to_pydatetime()
         if isinstance(end, str):
-            end = pd.Timestamp(end, tz=cls.CHUNK_TZ).to_pydatetime()
+            end = pd.Timestamp(end, tz=cls.STORE_TZ).to_pydatetime()
 
         # borne UTC pour comparaison directe avec start_ts
         start_utc = start.astimezone(ZoneInfo('UTC')) if start else None
