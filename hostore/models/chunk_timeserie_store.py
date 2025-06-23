@@ -20,7 +20,6 @@ class TimeseriesChunkStore(models.Model):
     # Métadonnées obligatoires
     start_ts = models.DateTimeField()        # premier timestamp inclus
     length   = models.IntegerField()         # nb. d’éléments
-    freq     = models.CharField(max_length=8)  # ex. 'H', '5T'
     tz       = models.CharField(max_length=48, default='UTC')
     dtype    = models.CharField(max_length=16)  # ex. 'float64'
 
@@ -30,6 +29,7 @@ class TimeseriesChunkStore(models.Model):
     # Paramètres haut niveau
     CHUNK_AXIS = ('year', 'month')   # config. par classe enfant. configs : ('year',) ('year', 'month')
     STORE_TZ   = 'Europe/Paris'
+    STORE_FREQ   = '1h'
     ITER_CHUNK_SIZE = 500
 
     class Meta:
@@ -171,7 +171,6 @@ class TimeseriesChunkStore(models.Model):
             chunk_month=month,
             start_ts=first_ts,
             length=len(arr),
-            freq=pd.infer_freq(serie.index),
             tz=str(serie.index.tz),
             dtype=str(arr.dtype),
             data=compressed
@@ -200,7 +199,6 @@ class TimeseriesChunkStore(models.Model):
         defaults = {
             'start_ts': row.start_ts,
             'length': row.length,
-            'freq': row.freq,
             'tz': row.tz,
             'dtype': row.dtype,
             'data': row.data,
@@ -239,7 +237,7 @@ class TimeseriesChunkStore(models.Model):
         start = row.start_ts.astimezone(ZoneInfo(row.tz))
         return pd.date_range(start=start,
                              periods=length,
-                             freq=row.freq)
+                             freq=cls.STORE_FREQ)
 
     # @classmethod
     # def _filter_interval(cls, qs, start, end):
