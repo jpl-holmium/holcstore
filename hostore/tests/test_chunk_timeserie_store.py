@@ -16,7 +16,7 @@ class TestStoreChunkYearMonth(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed = True
-        unique_together = ("version", "kind", "chunk_year", "chunk_month")
+        unique_together = ("version", "kind", "chunk_index")
 
 
 class TestStoreChunkYear(TimeseriesChunkStore):
@@ -27,7 +27,7 @@ class TestStoreChunkYear(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed = True
-        unique_together = ("version", "kind", "chunk_year",)
+        unique_together = ("version", "kind", "chunk_index",)
 
 
 # ---------------------------------------------------------------------------

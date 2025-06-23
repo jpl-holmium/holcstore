@@ -14,8 +14,7 @@ logger = logging.getLogger(__name__)
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
-    chunk_year  = models.IntegerField(null=True)
-    chunk_month = models.IntegerField(null=True)
+    chunk_index = models.IntegerField()
 
     # Métadonnées obligatoires
     start_ts = models.DateTimeField()        # premier timestamp inclus
@@ -33,8 +32,8 @@ class TimeseriesChunkStore(models.Model):
     ITER_CHUNK_SIZE = 500
 
     class Meta:
-        # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_year', 'chunk_month'] au unique together
-        unique_together = ['chunk_year', 'chunk_month']
+        # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_index'] au unique together
+        unique_together = ['chunk_index']
         abstract = True
 
     # ------------------ Sérialisation bas niveau ------------------
@@ -153,11 +152,10 @@ class TimeseriesChunkStore(models.Model):
             yield sub
 
     @classmethod
-    def _year_month(cls, serie):
-        first_ts = serie.index[0].tz_convert(cls.STORE_TZ)
-        year = first_ts.year if 'year' in cls.CHUNK_AXIS else None
-        month = first_ts.month if 'month' in cls.CHUNK_AXIS else None
-        return first_ts, year, month
+    def _chunk_index(cls, ts):
+        if cls.CHUNK_AXIS == ('year',):
+            return ts.year
+        return ts.year * 12 + ts.month - 1
 
     @classmethod
     def _build_row(cls, attrs, serie):
@@ -165,11 +163,10 @@ class TimeseriesChunkStore(models.Model):
             dsnull = serie[serie.isnull()].head(10)
             raise ValueError(f'Trying to build row with nulls in serie : \n{dsnull}')
         compressed, arr = cls._compress(serie)
-        first_ts, year, month = cls._year_month(serie)
+        first_ts = serie.index[0].tz_convert(cls.STORE_TZ)
         return cls(
             **attrs,
-            chunk_year=year,
-            chunk_month=month,
+            chunk_index=cls._chunk_index(first_ts),
             start_ts=first_ts,
             length=len(arr),
             tz=str(serie.index.tz),
@@ -180,7 +177,7 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def _upsert_chunk(cls, attrs, serie, update, replace):
         row = cls._build_row(attrs, serie)
-        attributes_fields = [*attrs.keys(), 'chunk_year', 'chunk_month']
+        attributes_fields = [*attrs.keys(), 'chunk_index']
         attributes = {f: getattr(row, f) for f in attributes_fields}
 
         if update:
@@ -220,7 +217,7 @@ class TimeseriesChunkStore(models.Model):
                 # collision => conseiller d’utiliser update=True ou replace=True
                 raise ValueError(
                     f'Chunk déjà présent pour clés {attrs} '
-                    f'({row.chunk_year}-{row.chunk_month})'
+                    f'({row.chunk_index})'
                 )
 
     @classmethod
@@ -241,72 +238,30 @@ class TimeseriesChunkStore(models.Model):
                              periods=length,
                              freq=cls.STORE_FREQ)
 
-    # @classmethod
-    # def _filter_interval(cls, qs, start, end):
-    #     if start:
-    #         qs = qs.filter(start_ts__lte=end or start)
-    #     if end:
-    #         qs = qs.filter(start_ts__lte=end)
-    #     return qs
-
     @classmethod
     def _filter_interval(cls, qs, start, end):
-        """
-        Retourne les chunks qui chevauchent [start, end] (inclus).
-        start / end sont des str, datetime, ou None (timezone naïve = STORE_TZ).
-        """
         if isinstance(start, str):
-            start = pd.Timestamp(start, tz=cls.STORE_TZ).to_pydatetime()
+            start = pd.Timestamp(start, tz=cls.STORE_TZ)
         if isinstance(end, str):
-            end = pd.Timestamp(end, tz=cls.STORE_TZ).to_pydatetime()
-
-        # borne UTC pour comparaison directe avec start_ts
-        start_utc = start.astimezone(ZoneInfo('UTC')) if start else None
-        end_utc = end.astimezone(ZoneInfo('UTC')) if end else None
-
-        # 1) filtre rapide par année/mois si chunking activé
-        if cls.CHUNK_AXIS:
-            if start and end and start.year == end.year:
-                qs = qs.filter(chunk_year=start.year)
-            elif start and end:
-                qs = qs.filter(chunk_year__gte=start.year,
-                               chunk_year__lte=end.year)
-            elif start:
-                qs = qs.filter(chunk_year__gte=start.year)
-            elif end:
-                qs = qs.filter(chunk_year__lte=end.year)
-
-            if 'month' in cls.CHUNK_AXIS and start and end and start.year == end.year:
-                if start.month == end.month:
-                    qs = qs.filter(chunk_month=start.month)
-                else:
-                    qs = qs.filter(chunk_month__gte=start.month,
-                                   chunk_month__lte=end.month)
-
-        # 2) filtre précis sur start_ts / fin_ts
-        if start_utc:
-            qs = qs.filter(start_ts__lte=end_utc or start_utc)  # chunk commence avant fin
-        if end_utc:
-            # Un chunk se termine à start_ts + (length-1)*freq
-            qs = qs.filter(
-                start_ts__gte=start_utc or end_utc - pd.Timedelta(days=365 * 200)
-                              |
-                              Q(start_ts__lt=end_utc)
-            )
+            end = pd.Timestamp(end, tz=cls.STORE_TZ)
+        if start:
+            qs = qs.filter(chunk_index__gte=cls._chunk_index(start))
+        if end:
+            qs = qs.filter(chunk_index__lte=cls._chunk_index(end))
         return qs
 
-class TestTimeseriesChunkStoreWithAttributes(TimeseriesChunkStore):
-    # Clé fonctionnelle définie par l’utilisateur
-    version = models.IntegerField()
-    kind    = models.CharField(max_length=100)
-
-    class Meta:
-        abstract = False
-        unique_together = (
-            'version', 'kind', 'chunk_year', 'chunk_month'
-        )
-        indexes = [
-            models.Index(fields=['version', 'kind']),
-            models.Index(fields=['chunk_year', 'chunk_month']),
-            models.Index(fields=['start_ts']),  # pour between
-        ]
+# class ExampleTimeseriesChunkStoreWithAttributes(TimeseriesChunkStore):
+#     # Clé fonctionnelle définie par l’utilisateur
+#     version = models.IntegerField()
+#     kind    = models.CharField(max_length=100)
+#
+#     class Meta:
+#         abstract = False
+#         unique_together = (
+#             'version', 'kind', 'chunk_year', 'chunk_month'
+#         )
+#         indexes = [
+#             models.Index(fields=['version', 'kind']),
+#             models.Index(fields=['chunk_year', 'chunk_month']),
+#             models.Index(fields=['start_ts']),  # pour between
+#         ]
