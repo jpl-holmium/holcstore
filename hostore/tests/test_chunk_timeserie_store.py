@@ -47,6 +47,7 @@ def make_series(start, periods, freq="1h", tz="Europe/Paris", seed=0):
 
 class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     test_table = None
+    year_count_expected = None
 
     # -------------------------------------------------------------------
     # création des tables à chaque test
@@ -82,7 +83,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         self.test_table.set_ts(attrs, serie)
         got = self.test_table.get_ts(attrs)
         pd.testing.assert_series_equal(got, serie)
-        self.assertGreaterEqual(self.test_table.objects.filter(**attrs).count(), 12)
+        self.assertGreaterEqual(self.test_table.objects.filter(**attrs).count(), self.year_count_expected)
 
     def test_range_filter(self):
         serie = make_series("2019-01-01", 24 * 365)
@@ -98,28 +99,39 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         """
         s1 = make_series("2022-01-01", 365*24)
         s2 = make_series("2022-06-01", 380*24, seed=42)
-        attrs = {"version": 4, "kind": "D"}
         s3 = make_series("2022-06-01", 380*24, seed=42)
+        attrs = {"version": 4, "kind": "D"}
         attrs_ot = {"version": 4, "kind": "other"}
+        s4 = make_series("2022-06-01", 380*24, seed=42)
 
         # other
-        self.test_table.set_ts(attrs_ot, s3)
-        pd.testing.assert_series_equal(self.test_table.get_ts(attrs_ot), s3)
+        self.test_table.set_ts(attrs_ot, s4)
+        pd.testing.assert_series_equal(self.test_table.get_ts(attrs_ot), s4)
 
         self.test_table.set_ts(attrs, s1)
         pd.testing.assert_series_equal(self.test_table.get_ts(attrs), s1)
 
         self.test_table.set_ts(attrs, s2, update=True)
-        print('self.test_table.get_ts(attrs)')
-        print(self.test_table.get_ts(attrs))
-        raise ValueError('donnee')
         pd.testing.assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]), check_freq=False)
 
-        self.test_table.set_ts(attrs, s2, replace=True)
-        pd.testing.assert_series_equal(self.test_table.get_ts(attrs), s2)
+        self.test_table.set_ts(attrs, s3, replace=True)
+        pd.testing.assert_series_equal(self.test_table.get_ts(attrs), s3)
 
         # other
-        pd.testing.assert_series_equal(self.test_table.get_ts(attrs_ot), s3)
+        pd.testing.assert_series_equal(self.test_table.get_ts(attrs_ot), s4)
+
+    def test_update_and_replace_simple(self):
+        """
+        ./manage.py test hostore.tests.test_chunk_timeserie_store.BaseTimeseriesChunkStoreTestCase.test_update_and_replace_simple
+        """
+        s1 = make_series("2022-01-01", 365*24)
+        s2 = make_series("2022-06-01", 380*24, seed=42)
+        attrs = {"version": 4, "kind": "D2"}
+
+        self.test_table.set_ts(attrs, s1)
+        self.test_table.set_ts(attrs, s2, update=True)
+
+        pd.testing.assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]), check_freq=False)
 
     def test_set_many_ts(self):
         mapping = {
@@ -157,6 +169,8 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
 
 class TestTimeseriesWith1ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
     test_table = TestStoreChunkYear
+    year_count_expected = 1
 
 class TestTimeseriesWith2ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
     test_table = TestStoreChunkYearMonth
+    year_count_expected = 12
