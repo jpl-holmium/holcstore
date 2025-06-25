@@ -12,9 +12,6 @@ from hostore.utils.timeseries import ts_combine_first
 logger = logging.getLogger(__name__)
 
 
-# todo optim bulk upsert ?
-#  au set_ts uniquement si pas de update ? replace ok ? tester
-
 # todo vérifier les options utilisateur (par ex validité de CHUNK_AXIS) ? ou ?
 
 # todo gérer le stockage de df ? prévoir des méthodes dédiées au transfert api ? (transférer les binary)
@@ -69,16 +66,23 @@ class TimeseriesChunkStore(models.Model):
         """
         if update and replace:
             raise ValueError('update and replace are mutuellement exclusifs.')
-
+        update_or_replace = update or replace
         serie = cls._normalize_index(serie, safe_insertion)
 
         if replace:
             # we need to delete previous related chunks (previous serie may lay on a greater span than new one)
             cls.objects.filter(**attrs).delete()
 
-        # Découpage éventuel
+        # Enregistrement par chunk
+        rows = []
         for sub in cls._chunk(serie):
-            cls._upsert_chunk(attrs, sub, update, replace)
+            if update_or_replace:
+                cls._upsert_chunk_update_or_replace(attrs, sub, update, replace)
+            else:
+                rows.append(cls._build_row(attrs, sub))
+
+        if not update_or_replace:
+            cls._bulk_upsert(rows)
 
     @classmethod
     def get_ts(cls, attrs: dict,
@@ -180,7 +184,7 @@ class TimeseriesChunkStore(models.Model):
         )
 
     @classmethod
-    def _upsert_chunk(cls, attrs, serie, update, replace):
+    def _upsert_chunk_update_or_replace(cls, attrs, serie, update, replace):
         row = cls._build_row(attrs, serie)
         attributes_fields = [*attrs.keys(), 'chunk_index']
         attributes = {f: getattr(row, f) for f in attributes_fields}
@@ -210,22 +214,10 @@ class TimeseriesChunkStore(models.Model):
             'data': row.data,
         }
 
-        if update or replace:
-            cls.objects.update_or_create(
-                defaults=defaults,
-                **attributes
-            )
-        else:
-            # insertion stricte
-            try:
-                with transaction.atomic(using=cls.objects.db):
-                    row.save()
-            except IntegrityError:
-                # collision => conseiller d’utiliser update=True ou replace=True
-                raise ValueError(
-                    f'Chunk déjà présent pour clés {attrs} '
-                    f'({row.chunk_index})'
-                )
+        cls.objects.update_or_create(
+            defaults=defaults,
+            **attributes
+        )
 
     @classmethod
     def _bulk_upsert(cls, rows):
