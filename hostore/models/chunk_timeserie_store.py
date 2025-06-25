@@ -139,9 +139,6 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _chunk(cls, serie: pd.Series):
-        if serie.isnull().any():
-            dsnull = serie[serie.isnull()].head(10)
-            raise ValueError(f'Trying to chunk with nulls in serie : \n{dsnull}')
         if not cls.CHUNK_AXIS:
             yield serie
             return
@@ -159,9 +156,6 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _build_row(cls, attrs, serie):
-        if serie.isnull().any():
-            dsnull = serie[serie.isnull()].head(10)
-            raise ValueError(f'Trying to build row with nulls in serie : \n{dsnull}')
         compressed, arr = cls._compress(serie)
         first_ts = serie.index[0].tz_convert(cls.STORE_TZ)
         return cls(
@@ -188,7 +182,9 @@ class TimeseriesChunkStore(models.Model):
             elif qs.count() == 1:
                 row = qs.first()
                 ds_existing = cls._decompress(row)
-                serie.index = serie.index.tz_convert('UTC')  #  avoid nan insertion at october tz switch
+                # tz_convert UTC : avoid nan insertion at october tz switch
+                serie.index = serie.index.tz_convert('UTC')
+                ds_existing.index = ds_existing.index.tz_convert('UTC')
                 ds_new = serie.combine_first(ds_existing)
                 row = cls._build_row(attrs, ds_new)
             else:
