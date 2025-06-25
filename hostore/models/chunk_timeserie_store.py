@@ -12,6 +12,13 @@ from hostore.utils.timeseries import ts_combine_first
 logger = logging.getLogger(__name__)
 
 
+# todo optim bulk upsert ?
+#  au set_ts uniquement si pas de update ? replace ok ? tester
+
+# todo vérifier les options utilisateur (par ex validité de CHUNK_AXIS) ? ou ?
+
+# todo gérer le stockage de df ? prévoir des méthodes dédiées au transfert api ? (transférer les binary)
+
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
     chunk_index = models.IntegerField()
@@ -55,7 +62,7 @@ class TimeseriesChunkStore(models.Model):
     # -- public --
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,
-               update=False, replace=False):
+               update=False, replace=False, safe_insertion=False):
         """
         Insère ou met à jour une série dense.
         attrs contient uniquement les clés métier (version/kind/...).
@@ -63,7 +70,7 @@ class TimeseriesChunkStore(models.Model):
         if update and replace:
             raise ValueError('update and replace are mutuellement exclusifs.')
 
-        serie = cls._normalize_index(serie)
+        serie = cls._normalize_index(serie, safe_insertion)
 
         if replace:
             # we need to delete previous related chunks (previous serie may lay on a greater span than new one)
@@ -101,7 +108,7 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series],
-                    keys: tuple[str, ...]):
+                    keys: tuple[str, ...], safe_insertion=False):
         """
         mapping : {(k1,k2,...): serie}
         keys    : ('version','kind',...)
@@ -109,7 +116,7 @@ class TimeseriesChunkStore(models.Model):
         rows = []
         for ktuple, serie in mapping.items():
             attrs = dict(zip(keys, ktuple))
-            serie = cls._normalize_index(serie)
+            serie = cls._normalize_index(serie, safe_insertion)
             for sub in cls._chunk(serie):
                 rows.append(cls._build_row(attrs, sub))
         cls._bulk_upsert(rows)
@@ -124,15 +131,19 @@ class TimeseriesChunkStore(models.Model):
     # -- private helpers --
 
     @classmethod
-    def _normalize_index(cls, serie: pd.Series) -> pd.Series:
+    def _normalize_index(cls, serie: pd.Series, safe_insertion: bool) -> pd.Series:
         if not isinstance(serie.index, pd.DatetimeIndex):
             raise ValueError('Index doit être DatetimeIndex.')
-        serie = serie.sort_index()
         if serie.index.tz is None:
             logger.warning('Saving serie without tz may lead to inconsistent results')
             serie = serie.tz_localize(cls.STORE_TZ)
         else:
             serie = serie.tz_convert(cls.STORE_TZ)
+
+        if safe_insertion:
+            new_index = pd.date_range(start=serie.index[0], end=serie.index[-1], freq=cls.STORE_FREQ)
+            serie = serie.reindex(new_index)
+
         if serie.isnull().all():
             raise ValueError('Série vide.')
         return serie

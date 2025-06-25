@@ -55,7 +55,7 @@ def assert_series_equal(s1, s2, **kwargs):
     s1 = s1.tz_convert(tz_check)
     s2 = s2.tz_convert(tz_check)
     try:
-        pd.testing.assert_series_equal(s1, s2, **kwargs)
+        pd.testing.assert_series_equal(s1, s2, **kwargs, check_freq=False)
     except AssertionError as e:
         diff = s1-s2
         diff = diff.loc[diff != 0]
@@ -72,7 +72,9 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
 
     test_table = None
     year_count_expected = None
-    series_holes = None
+    series_na = None
+    drop_series_na = False
+    safe_insertion = False
     input_tz = 'Europe/Paris'
 
     # -------------------------------------------------------------------
@@ -100,9 +102,12 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         rng = pd.date_range(start=start, periods=periods, freq=freq, tz=cls.input_tz)
         np.random.seed(seed)
         ds = pd.Series(np.random.randn(periods), index=rng)
-        if cls.series_holes is not None:
-            for imin, imax in cls.series_holes:
+        if cls.series_na is not None:
+            for imin, imax in cls.series_na:
                 ds.iloc[imin:imax] = None
+
+        if cls.drop_series_na:
+            ds.dropna(inplace=True)
         return ds
 
     # -------------------------------------------------------------------
@@ -112,7 +117,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     def test_set_and_get(self):
         serie = self.make_series("2020-01-01", 24 * 365)
         attrs = {"version": 1, "kind": "A"}
-        self.test_table.set_ts(attrs, serie)
+        self.test_table.set_ts(attrs, serie, safe_insertion=self.safe_insertion)
         got = self.test_table.get_ts(attrs)
         assert_series_equal(got, serie)
         self.assertGreaterEqual(self.test_table.objects.filter(**attrs).count(), self.year_count_expected)
@@ -120,7 +125,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     def test_range_filter(self):
         serie = self.make_series("2019-01-01", 24 * 365)
         attrs = {"version": 3, "kind": "C"}
-        self.test_table.set_ts(attrs, serie)
+        self.test_table.set_ts(attrs, serie, safe_insertion=self.safe_insertion)
         start, end = localise_date_interval(dt.date(2019,6,1), dt.date(2019,6,2))
         sub = self.test_table.get_ts(attrs, start=start, end=end)
         expected = serie[start:end]
@@ -138,16 +143,16 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         s4 = self.make_series("2022-06-01", 380*24, seed=42)
 
         # other
-        self.test_table.set_ts(attrs_ot, s4)
+        self.test_table.set_ts(attrs_ot, s4, safe_insertion=self.safe_insertion)
         assert_series_equal(self.test_table.get_ts(attrs_ot), s4)
 
-        self.test_table.set_ts(attrs, s1)
+        self.test_table.set_ts(attrs, s1, safe_insertion=self.safe_insertion)
         assert_series_equal(self.test_table.get_ts(attrs), s1)
 
-        self.test_table.set_ts(attrs, s2, update=True)
-        assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]), check_freq=False)
+        self.test_table.set_ts(attrs, s2, update=True, safe_insertion=self.safe_insertion)
+        assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]))
 
-        self.test_table.set_ts(attrs, s3, replace=True)
+        self.test_table.set_ts(attrs, s3, replace=True, safe_insertion=self.safe_insertion)
         assert_series_equal(self.test_table.get_ts(attrs), s3)
 
         # other
@@ -161,17 +166,17 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         s2 = self.make_series("2022-06-01", 380*24, seed=42)
         attrs = {"version": 4, "kind": "D2"}
 
-        self.test_table.set_ts(attrs, s1)
-        self.test_table.set_ts(attrs, s2, update=True)
+        self.test_table.set_ts(attrs, s1, safe_insertion=self.safe_insertion)
+        self.test_table.set_ts(attrs, s2, update=True, safe_insertion=self.safe_insertion)
 
-        assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]), check_freq=False)
+        assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]))
 
     def test_set_many_ts(self):
         mapping = {
             (5, "E"): self.make_series("2023-01-01", 24),
             (5, "F"): self.make_series("2023-02-01", 24 * 2),
         }
-        self.test_table.set_many_ts(mapping, keys=("version", "kind"))
+        self.test_table.set_many_ts(mapping, keys=("version", "kind"), safe_insertion=self.safe_insertion)
         for (v, k), serie in mapping.items():
             got = self.test_table.get_ts({"version": v, "kind": k})
             assert_series_equal(got, serie)
@@ -181,7 +186,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
             (6, "G"): self.make_series("2024-03-01", 24),
             (6, "H"): self.make_series("2024-04-01", 24),
         }
-        self.test_table.set_many_ts(mapping, keys=("version", "kind"))
+        self.test_table.set_many_ts(mapping, keys=("version", "kind"), safe_insertion=self.safe_insertion)
         seen = {
             (row.version, row.kind): serie
             for serie, row in self.test_table.yield_ts({"version": 6})
@@ -193,50 +198,84 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     def test_invalid_calls(self):
         serie = self.make_series("2025-01-01", 24)
         with self.assertRaises(ValueError):
-            self.test_table.set_ts({"version": 7, "kind": "I"}, serie, update=True, replace=True)
+            self.test_table.set_ts({"version": 7, "kind": "I"}, serie, update=True, replace=True, safe_insertion=self.safe_insertion)
 
         bad = pd.Series([1, 2, 3])
         with self.assertRaises(ValueError):
-            self.test_table.set_ts({"version": 8, "kind": "J"}, bad)
+            self.test_table.set_ts({"version": 8, "kind": "J"}, bad, safe_insertion=self.safe_insertion)
 
 
 class TestTimeseriesWith1ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year
+    """
     __unittest_skip__ = False
     test_table = TestStoreChunkYear
     year_count_expected = 1
 
 class TestTimeseriesWith2ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year Month
+    """
     __unittest_skip__ = False
     test_table = TestStoreChunkYearMonth
     year_count_expected = 12
 
-class TestTimeseriesWith1ChunkWithHolesTestCase(BaseTimeseriesChunkStoreTestCase):
+class TestTimeseriesWith1ChunkWithNanTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year
+    Series input avec nan
+    """
     __unittest_skip__ = False
     test_table = TestStoreChunkYear
     year_count_expected = 1
-    series_holes = [
+    series_na = [
         [24*20, 24*60],
         [24*150, 24*200],
         [24*205, 24*220],
     ]
 
-class TestTimeseriesWith2ChunkWithHolesTestCase(BaseTimeseriesChunkStoreTestCase):
+class TestTimeseriesWith2ChunkWithNanTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year Month
+    Series input avec nan
+    """
     __unittest_skip__ = False
     test_table = TestStoreChunkYearMonth
     year_count_expected = 12
-    series_holes = [
+    series_na = [
         [24*20, 24*60],
         [24*150, 24*200],
         [24*205, 24*220],
     ]
 
-class TestTimeseriesWith2ChunkWithHolesUtcTestCase(BaseTimeseriesChunkStoreTestCase):
+class TestTimeseriesWith2ChunkWithNanUtcTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year Month
+    Series input avec nan, en TZ UTC
+    """
     __unittest_skip__ = False
     test_table = TestStoreChunkYearMonth
     year_count_expected = 12
-    series_holes = [
+    series_na = [
         [24 * 20, 24 * 60],
         [24 * 150, 24 * 200],
         [24 * 201, 24 * 220],
     ]
     input_tz='UTC'
+
+class TestTimeseriesWith2ChunkWithHoleTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year Month
+    Series input avec trous (index a espacement non constant) => safe_insertion obligatoire
+    """
+    __unittest_skip__ = False
+    test_table = TestStoreChunkYearMonth
+    year_count_expected = 12
+    series_na = [
+        [24 * 20, 24 * 60],
+    ]
+    # drop_series_na + safe_insertion => fine
+    # if a serie is inserted with an incomplete index (holes) user must use safe_insertion option
+    drop_series_na = True
+    safe_insertion = True
