@@ -1,11 +1,25 @@
-
+import datetime as dt
 import numpy as np
 import pandas as pd
+import pytz
 from django.db import models, connection
 from django.test import TransactionTestCase
 
 from hostore.models import TimeseriesChunkStore
 from hostore.utils.timeseries import ts_combine_first
+
+
+TZ_PARIS = 'Europe/Paris'
+
+def localise_date(pydate, time=dt.time(), timezone_name=TZ_PARIS):
+    if timezone_name is None:
+        return dt.datetime.combine(pydate, time)
+    else:
+        return pytz.timezone(timezone_name).localize(dt.datetime.combine(pydate, time))
+
+def localise_date_interval(date_start, date_end, timezone_name=TZ_PARIS):
+    return (localise_date(date_start, timezone_name=timezone_name),
+            localise_date(date_end, time=dt.time.max, timezone_name=timezone_name))
 
 
 class TestStoreChunkYearMonth(TimeseriesChunkStore):
@@ -35,8 +49,11 @@ class TestStoreChunkYear(TimeseriesChunkStore):
 # ---------------------------------------------------------------------------
 
 def assert_series_equal(s1, s2, **kwargs):
+    tz_check = 'UTC'
     s1 = s1.dropna()
     s2 = s2.dropna()
+    s1 = s1.tz_convert(tz_check)
+    s2 = s2.tz_convert(tz_check)
     try:
         pd.testing.assert_series_equal(s1, s2, **kwargs)
     except AssertionError as e:
@@ -56,7 +73,8 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     test_table = None
     year_count_expected = None
     series_holes = None
-    
+    input_tz = 'Europe/Paris'
+
     # -------------------------------------------------------------------
     # création des tables à chaque test
     # -------------------------------------------------------------------
@@ -76,16 +94,10 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         # On les recrée si nécessaire avant chaque test.
         self._ensure_tables()
 
-
-    # Django vide et détruit la base de test à la fin du run ;
-    # pas besoin de supprimer manuellement les tables inline. Supprimer
-    # la méthode `tearDownClass` évite les erreurs « no such table ».
-    pass
-    
     @classmethod
-    def make_series(cls, start, periods, freq="1h", tz="Europe/Paris", seed=0):
+    def make_series(cls, start, periods, freq="1h", seed=0):
         """Génère une série aléatoire de longueur `periods`."""
-        rng = pd.date_range(start=start, periods=periods, freq=freq, tz=tz)
+        rng = pd.date_range(start=start, periods=periods, freq=freq, tz=cls.input_tz)
         np.random.seed(seed)
         ds = pd.Series(np.random.randn(periods), index=rng)
         if cls.series_holes is not None:
@@ -109,8 +121,9 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         serie = self.make_series("2019-01-01", 24 * 365)
         attrs = {"version": 3, "kind": "C"}
         self.test_table.set_ts(attrs, serie)
-        sub = self.test_table.get_ts(attrs, start="2019-06-01", end="2019-06-02")
-        expected = serie["2019-06-01":"2019-06-02"]
+        start, end = localise_date_interval(dt.date(2019,6,1), dt.date(2019,6,2))
+        sub = self.test_table.get_ts(attrs, start=start, end=end)
+        expected = serie[start:end]
         assert_series_equal(sub, expected)
 
     def test_update_and_replace(self):
@@ -216,3 +229,14 @@ class TestTimeseriesWith2ChunkWithHolesTestCase(BaseTimeseriesChunkStoreTestCase
         [24*150, 24*200],
         [24*205, 24*220],
     ]
+
+class TestTimeseriesWith2ChunkWithHolesUtcTestCase(BaseTimeseriesChunkStoreTestCase):
+    __unittest_skip__ = False
+    test_table = TestStoreChunkYearMonth
+    year_count_expected = 12
+    series_holes = [
+        [24 * 20, 24 * 60],
+        [24 * 150, 24 * 200],
+        [24 * 201, 24 * 220],
+    ]
+    input_tz='UTC'
