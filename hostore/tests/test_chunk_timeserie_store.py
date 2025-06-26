@@ -117,14 +117,35 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     # -------------------------------------------------------------------
 
     def test_set_and_get(self):
-        serie = self.make_series("2020-01-01", 24 * 365)
+        # serie_a only
+        serie_a = self.make_series("2020-01-01", 24 * 365)
         attrs = {"version": 1, "kind": "A"}
-        self.test_table.set_ts(attrs, serie, safe_insertion=self.safe_insertion)
+        self.test_table.set_ts(attrs, serie_a, safe_insertion=self.safe_insertion)
         got = self.test_table.get_ts(attrs)
-        assert_series_equal(got, serie)
+        assert_series_equal(got, serie_a)
         self.assertGreaterEqual(self.test_table.objects.filter(**attrs).count(), self.year_count_expected)
+
+        # serie_a + serie_b
+        serie_b = self.make_series("2020-01-01", 24 * 365)
+        attrs = {"version": 1, "kind": "B"}
+        self.test_table.set_ts(attrs, serie_b, safe_insertion=self.safe_insertion)
+        got = self.test_table.get_ts(attrs)
+        assert_series_equal(got, serie_b)
+
+        # nonexistent
         got = self.test_table.get_ts({"version": 1, "kind": "nonexistent"})
         self.assertEqual(got, None)
+
+    def test_set_and_get_underconstrained(self):
+        # "under constrained" request - secured by _ensure_all_attrs_specified
+
+        serie_a = self.make_series("2020-01-01", 24 * 365)
+        attrs = {"version": 1}
+        with self.assertRaises(ValueError):
+            self.test_table.set_ts(attrs, serie_a, safe_insertion=self.safe_insertion)
+
+        with self.assertRaises(ValueError):
+            got = self.test_table.get_ts(attrs)
 
     def test_set_and_get_full_nan(self):
         serie = self.make_series("2020-01-01", 24 * 365, full_nan=True)

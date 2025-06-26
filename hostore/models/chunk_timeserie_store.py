@@ -2,19 +2,16 @@ import logging
 from typing import Union
 from zoneinfo import ZoneInfo
 
-from django.db import models, transaction, IntegrityError
-from django.utils import timezone
+from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
 
-from hostore.utils.timeseries import ts_combine_first
-
 logger = logging.getLogger(__name__)
 
-# todo vérifier les options utilisateur (par ex validité de CHUNK_AXIS) ? ou ?
-
-# todo gérer le stockage de df ? prévoir des méthodes dédiées au transfert api ? (transférer les binary)
+# KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
+# KEYS_ABSTRACT_CLASS.add('id')
+KEYS_ABSTRACT_CLASS = {'id', 'tz', 'length', 'start_ts', 'data', 'dtype', 'chunk_index'}
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
@@ -67,6 +64,7 @@ class TimeseriesChunkStore(models.Model):
         """
         if update and replace:
             raise ValueError('update and replace are mutually exclusive')
+        cls._ensure_all_attrs_specified(attrs)
         update_or_replace = update or replace
         serie = cls._normalize_index(serie, safe_insertion)
         if serie is None:
@@ -91,6 +89,7 @@ class TimeseriesChunkStore(models.Model):
         """
         Récupère et recompose la série.
         """
+        cls._ensure_all_attrs_specified(attrs)
         qs = cls.objects.filter(**attrs)
         if start or end:
             qs = cls._filter_interval(qs, start, end)
@@ -121,6 +120,7 @@ class TimeseriesChunkStore(models.Model):
         rows = []
         for ktuple, serie in mapping.items():
             attrs = dict(zip(keys, ktuple))
+            cls._ensure_all_attrs_specified(attrs)
             serie = cls._normalize_index(serie, safe_insertion)
             if serie is None:
                 continue
@@ -251,6 +251,23 @@ class TimeseriesChunkStore(models.Model):
         if end:
             qs = qs.filter(chunk_index__lte=cls._chunk_index(end))
         return qs
+
+    @classmethod
+    def _ensure_all_attrs_specified(cls, attrs):
+        """
+        Vérifie que l'utilisateur a renseigné tous les attributs "métiers"
+        """
+        # # check version 2
+        # check = qs.values('chunk_index').annotate(count=Count('id')).filter(count__gt=1)
+        # if check.exists():
+        #     raise ValueError
+
+        # check version 1
+        attrs_keys = set(attrs.keys())
+        model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
+        if model_keys != attrs_keys:
+            raise ValueError(f'Trying to set or get partial attributes {attrs} while full attributes list is {model_keys}')
+
 
 # class ExampleTimeseriesChunkStoreWithAttributes(TimeseriesChunkStore):
 #     # Clé fonctionnelle définie par l’utilisateur
