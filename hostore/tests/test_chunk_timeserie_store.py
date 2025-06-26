@@ -97,9 +97,11 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         self._ensure_tables()
 
     @classmethod
-    def make_series(cls, start, periods, freq="1h", seed=0):
+    def make_series(cls, start, periods, freq="1h", seed=0, full_nan=False):
         """Génère une série aléatoire de longueur `periods`."""
         rng = pd.date_range(start=start, periods=periods, freq=freq, tz=cls.input_tz)
+        if full_nan:
+            return pd.Series(None, index=rng)
         np.random.seed(seed)
         ds = pd.Series(np.random.randn(periods), index=rng)
         if cls.series_na is not None:
@@ -121,6 +123,15 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         got = self.test_table.get_ts(attrs)
         assert_series_equal(got, serie)
         self.assertGreaterEqual(self.test_table.objects.filter(**attrs).count(), self.year_count_expected)
+        got = self.test_table.get_ts({"version": 1, "kind": "nonexistent"})
+        self.assertEqual(got, None)
+
+    def test_set_and_get_full_nan(self):
+        serie = self.make_series("2020-01-01", 24 * 365, full_nan=True)
+        attrs = {"version": 1, "kind": "Anan"}
+        self.test_table.set_ts(attrs, serie, safe_insertion=self.safe_insertion)
+        got = self.test_table.get_ts(attrs)
+        self.assertEqual(got, None)
 
     def test_range_filter(self):
         serie = self.make_series("2019-01-01", 24 * 365)
