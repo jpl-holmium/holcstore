@@ -34,6 +34,7 @@ class TimeseriesChunkStore(models.Model):
     STORE_TZ   = 'Europe/Paris'
     STORE_FREQ   = '1h'
     ITER_CHUNK_SIZE = 500
+    BULK_CREATE_BATCH_SIZE = 500
 
     class Meta:
         # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_index'] au unique together
@@ -86,8 +87,7 @@ class TimeseriesChunkStore(models.Model):
             cls._bulk_upsert(rows)
 
     @classmethod
-    def get_ts(cls, attrs: dict,
-               start=None, end=None, flat=True) -> None | pd.Series | dict:
+    def get_ts(cls, attrs: dict, start=None, end=None) -> None | pd.Series:
         """
         Récupère et recompose la série.
         """
@@ -109,7 +109,7 @@ class TimeseriesChunkStore(models.Model):
         if start or end:
             full = full.loc[start:end]
 
-        return full if flat else [{'data': full, **attrs}]
+        return full
 
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series],
@@ -175,7 +175,7 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def _build_row(cls, attrs, serie):
         compressed, arr = cls._compress(serie)
-        first_ts = serie.index[0].tz_convert(cls.STORE_TZ)
+        first_ts = serie.index[0]
         return cls(
             **attrs,
             chunk_index=cls._chunk_index(first_ts),
@@ -230,7 +230,7 @@ class TimeseriesChunkStore(models.Model):
         with transaction.atomic():
             cls.objects.bulk_create(
                 rows,
-                batch_size=1000,  # optionnel : tuning
+                batch_size=cls.BULK_CREATE_BATCH_SIZE,  # optionnel : tuning
             )
 
     @classmethod
