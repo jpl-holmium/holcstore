@@ -12,15 +12,11 @@ logger = logging.getLogger(__name__)
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
 # TODO automatiser la génération de ces clef ? source d'erreur possible
-KEYS_ABSTRACT_CLASS = {'id', 'tz', 'length', 'start_ts', 'data', 'dtype', 'chunk_index', 'chunk_year', 'chunk_month'}
+KEYS_ABSTRACT_CLASS = {'id', 'tz', 'length', 'start_ts', 'data', 'dtype', 'chunk_index'}
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
     chunk_index = models.IntegerField()
-
-    # Champs pour optimiser l'indexation
-    chunk_year = models.IntegerField()
-    chunk_month = models.IntegerField()
 
     # Métadonnées obligatoires
     start_ts = models.DateTimeField()        # premier timestamp inclus
@@ -249,8 +245,6 @@ class TimeseriesChunkStore(models.Model):
         return cls(
             **attrs,
             chunk_index=cls._chunk_index(first_ts),
-            chunk_year=first_ts.year,
-            chunk_month=first_ts.month,
             start_ts=first_ts,
             length=len(arr),
             tz=str(serie.index.tz),
@@ -287,8 +281,6 @@ class TimeseriesChunkStore(models.Model):
             'tz': row.tz,
             'dtype': row.dtype,
             'data': row.data,
-            'chunk_year': row.chunk_year,
-            'chunk_month': row.chunk_month,
         }
 
         cls.objects.update_or_create(
