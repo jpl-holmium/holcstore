@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 # KEYS_ABSTRACT_CLASS.add('id')
 # TODO automatiser la génération de ces clef ? source d'erreur possible
 KEYS_ABSTRACT_CLASS = {'id', 'tz', 'length', 'start_ts', 'data', 'dtype', 'chunk_index', 'chunk_year', 'chunk_month'}
-CHUNK_INDEX_FIELDS = ['chunk_index', 'chunk_year', 'chunk_month']
-
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
@@ -200,7 +198,7 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def _upsert_chunk_update_or_replace(cls, attrs, serie, update, replace):
         row = cls._build_row(attrs, serie)
-        attributes_fields = [*attrs.keys(), *CHUNK_INDEX_FIELDS]
+        attributes_fields = [*attrs.keys(), 'chunk_index']
         attributes = {f: getattr(row, f) for f in attributes_fields}
 
         if update:
@@ -226,6 +224,8 @@ class TimeseriesChunkStore(models.Model):
             'tz': row.tz,
             'dtype': row.dtype,
             'data': row.data,
+            'chunk_year': row.chunk_year,
+            'chunk_month': row.chunk_month,
         }
 
         cls.objects.update_or_create(
