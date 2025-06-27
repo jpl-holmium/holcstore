@@ -11,11 +11,18 @@ logger = logging.getLogger(__name__)
 
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
-KEYS_ABSTRACT_CLASS = {'id', 'tz', 'length', 'start_ts', 'data', 'dtype', 'chunk_index'}
+# TODO automatiser la génération de ces clef ? source d'erreur possible
+KEYS_ABSTRACT_CLASS = {'id', 'tz', 'length', 'start_ts', 'data', 'dtype', 'chunk_index', 'chunk_year', 'chunk_month'}
+CHUNK_INDEX_FIELDS = ['chunk_index', 'chunk_year', 'chunk_month']
+
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
     chunk_index = models.IntegerField()
+
+    # Champs pour optimiser l'indexation
+    chunk_year = models.IntegerField()
+    chunk_month = models.IntegerField()
 
     # Métadonnées obligatoires
     start_ts = models.DateTimeField()        # premier timestamp inclus
@@ -35,6 +42,7 @@ class TimeseriesChunkStore(models.Model):
 
     class Meta:
         # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_index'] au unique together
+        # TODO doc meta : indexation, contrainte unicité, champs interdits
         unique_together = ['chunk_index']
         abstract = True
 
@@ -179,6 +187,8 @@ class TimeseriesChunkStore(models.Model):
         return cls(
             **attrs,
             chunk_index=cls._chunk_index(first_ts),
+            chunk_year=first_ts.year,
+            chunk_month=first_ts.month,
             start_ts=first_ts,
             length=len(arr),
             tz=str(serie.index.tz),
@@ -189,7 +199,7 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def _upsert_chunk_update_or_replace(cls, attrs, serie, update, replace):
         row = cls._build_row(attrs, serie)
-        attributes_fields = [*attrs.keys(), 'chunk_index']
+        attributes_fields = [*attrs.keys(), *CHUNK_INDEX_FIELDS]
         attributes = {f: getattr(row, f) for f in attributes_fields}
 
         if update:
