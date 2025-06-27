@@ -172,7 +172,7 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _chunk(cls, serie: pd.Series):
-        return cls.__chunk_numpy(serie)
+        return cls.__chunk_pd(serie)
 
     @classmethod
     def __chunk_pd(cls, serie: pd.Series):

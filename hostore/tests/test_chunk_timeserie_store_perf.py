@@ -23,7 +23,9 @@ class LoadStoreMonth(TimeseriesChunkStore):
         app_label = "ts_inline"
         managed   = True
         unique_together = ("version", "kind", "chunk_index")
-
+        indexes = [
+            models.Index(fields=['version', 'kind', 'chunk_index']),
+        ]
 
 class LoadStoreYear(TimeseriesChunkStore):
     """Chunk (year)"""
@@ -108,20 +110,20 @@ class BaseLoadTsStoreTestCase(TransactionTestCase):
 
         # 4) Affiche un petit récap (pas d’assert stricte : ajustable)
         print(
-            f"\n[LOAD] {self.N_SERIES} séries × {self.SERIES_LEN_H} h "
+            # f"\n[LOAD] {self.N_SERIES} séries × {self.SERIES_LEN_H/24}j "
             f"→ insert {insert_dur:.2f}s, read {read_dur:.2f}s "
             f"({Store.__name__})"
         )
 
-class LoadMonth_200x1Y(BaseLoadTsStoreTestCase):
+class LoadMonth_200x5Y(BaseLoadTsStoreTestCase):
     """
-    ./manage.py test hostore.tests.test_chunk_timeserie_store_perf.LoadMonth_200x1Y
+    ./manage.py test hostore.tests.test_chunk_timeserie_store_perf.LoadMonth_200x5Y
     100 séries d’un an, chunk mensuel
     """
     __unittest_skip__ = False
     STORE_CLASS = LoadStoreMonth
     N_SERIES    = 200
-    SERIES_LEN_H = 24 * 365     # 1 an
+    SERIES_LEN_H = 24 * 365 * 5     # 5 an
 
 class LoadYear_20x5Y(BaseLoadTsStoreTestCase):
     """
