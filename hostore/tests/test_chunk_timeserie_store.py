@@ -170,6 +170,21 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         s1 = self.make_series("2022-01-01", 365*24)
         s2 = self.make_series("2022-06-01", 380*24, seed=42)
         s3 = self.make_series("2022-06-01", 380*24, seed=42)
+        self._abstract_test_update_and_replace(s1, s2, s3)
+
+    def test_update_and_replace_discontinuous(self):
+        s1 = self.make_series("2022-01-01", 24 * 10)
+        s2 = self.make_series("2022-01-15", 24 * 5, seed=42)
+        s3 = self.make_series("2022-06-01", 24 * 280, seed=42)
+        self._abstract_test_update_and_replace(s1, s2, s3)
+
+    def _abstract_test_update_and_replace(self, s1, s2, s3):
+        """
+        s1 : first set
+        s2 : update s1
+        s3 : replace s2
+        """
+        # other serie
         attrs = {"version": 4, "kind": "D"}
         attrs_ot = {"version": 4, "kind": "other"}
         s4 = self.make_series("2022-06-01", 380*24, seed=42)
