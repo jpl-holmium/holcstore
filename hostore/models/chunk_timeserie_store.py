@@ -37,6 +37,7 @@ class TimeseriesChunkStore(models.Model):
     STORE_FREQ   = '1h'
     ITER_CHUNK_SIZE = 500
     BULK_CREATE_BATCH_SIZE = 500
+    _model_keys = None
 
     class Meta:
         # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_index'] au unique together
@@ -44,19 +45,28 @@ class TimeseriesChunkStore(models.Model):
         unique_together = ['chunk_index']
         abstract = True
 
-    # ------------------ Sérialisation bas niveau ------------------
+    @classmethod
+    def get_model_keys(cls):
+        if cls._model_keys is None:
+            cls._model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
+        return cls._model_keys
 
+    # ------------------ Sérialisation bas niveau ------------------
     @staticmethod
     def _compress(serie: pd.Series) -> (bytes, np.array):
         arr = serie.to_numpy()
         return lz4.compress(arr.tobytes()), arr
 
     @classmethod
-    def _decompress(cls, row) -> pd.Series:
+    def _decompress(cls, row, mem_view=False) -> pd.Series:
         blob = row.data
         dtype = row.dtype
-        raw = lz4.decompress(blob)
-        arr = np.frombuffer(raw, dtype=dtype)
+        if mem_view:
+            raw = memoryview(lz4.decompress(blob))
+            arr = np.frombuffer(raw, dtype=dtype, like=np.empty(0, dtype=dtype))
+        else:
+            raw = lz4.decompress(blob)
+            arr = np.frombuffer(raw, dtype=dtype)
         idx = cls._rebuild_index(row, len(arr))
         return pd.Series(arr, index=idx)
 
@@ -164,6 +174,10 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _chunk(cls, serie: pd.Series):
+        return cls.__chunk_numpy(serie)
+
+    @classmethod
+    def __chunk_pd(cls, serie: pd.Series):
         if not cls.CHUNK_AXIS:
             yield serie
             return
@@ -172,6 +186,21 @@ class TimeseriesChunkStore(models.Model):
         ])
         for _, sub in grouper:
             yield sub
+
+    @classmethod
+    def __chunk_numpy(cls, serie: pd.Series):
+        idx = serie.index
+        if cls.CHUNK_AXIS == ('year',):
+            keys = idx.year
+        else:  # ('year','month')
+            keys = idx.year * 12 + idx.month - 1
+
+        # repérage des frontières
+        change = np.where(np.diff(keys) != 0)[0] + 1
+        splits = np.split(np.arange(len(serie)), change)
+
+        for sl in splits:
+            yield serie.iloc[sl]
 
     @classmethod
     def _chunk_index(cls, ts):
@@ -275,7 +304,7 @@ class TimeseriesChunkStore(models.Model):
 
         # check version 1
         attrs_keys = set(attrs.keys())
-        model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
+        model_keys = cls.get_model_keys()
         if model_keys != attrs_keys:
             raise ValueError(f'Trying to set or get partial attributes {attrs} while full attributes list is {model_keys}')
 
