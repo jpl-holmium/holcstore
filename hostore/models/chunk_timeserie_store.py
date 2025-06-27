@@ -41,7 +41,6 @@ class TimeseriesChunkStore(models.Model):
 
     class Meta:
         # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_index'] au unique together
-        # TODO doc meta : indexation, contrainte unicité, champs interdits
         unique_together = ['chunk_index']
         abstract = True
 
@@ -105,7 +104,6 @@ class TimeseriesChunkStore(models.Model):
         """
         Récupère et recompose la série.
         """
-        # TODO stress test : départager qs.order_by VS df.sort_index
         cls._ensure_all_attrs_specified(attrs)
         qs = cls.objects.filter(**attrs).order_by('chunk_index')
         if start or end:

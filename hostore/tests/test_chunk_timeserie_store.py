@@ -221,7 +221,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         self.test_table.set_many_ts(mapping, keys=("version", "kind"), safe_insertion=self.safe_insertion)
         seen = {
             (row.version, row.kind): serie
-            for serie, row in self.test_table.yield_ts({"version": 6})
+            for serie, row in self.test_table.yield_many_ts({"version": 6})
         }
         self.assertEqual(set(seen.keys()), {(6, "G"), (6, "H")})
         for key, serie in seen.items():
