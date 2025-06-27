@@ -97,8 +97,9 @@ class TimeseriesChunkStore(models.Model):
         """
         Récupère et recompose la série.
         """
+        # TODO stress test : départager qs.order_by VS df.sort_index
         cls._ensure_all_attrs_specified(attrs)
-        qs = cls.objects.filter(**attrs)
+        qs = cls.objects.filter(**attrs).order_by('chunk_index')
         if start or end:
             qs = cls._filter_interval(qs, start, end)
 
@@ -109,7 +110,7 @@ class TimeseriesChunkStore(models.Model):
         if not pieces:
             return None
 
-        full = pd.concat(pieces).sort_index()
+        full = pd.concat(pieces)
         full.index = pd.to_datetime(full.index, utc=True)
         full = full.tz_convert(cls.STORE_TZ)
 
