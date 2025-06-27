@@ -144,11 +144,47 @@ class TimeseriesChunkStore(models.Model):
         cls._bulk_upsert(rows)
 
     @classmethod
-    def yield_ts(cls, filters: dict | None = None):
-        qs = cls.objects.filter(**(filters or {})).iterator(
-            chunk_size=cls.ITER_CHUNK_SIZE)
-        for row in qs:
-            yield cls._decompress(row), row
+    def yield_many_ts(cls, attrs: dict, start=None, end=None):
+        """
+        Génère (serie, attrs_dict) pour chaque combinaison métier
+        correspondant au filtre partial `attrs`.
+        - Ne garde jamais qu’une combinaison à la fois en mémoire.
+        - Respecte `start` / `end` (mêmes formats que get_ts).
+        """
+        # On valide seulement les clés fournies
+        bad = set(attrs) - cls.get_model_keys()
+        if bad:
+            raise ValueError(f"Unknown attribute(s) {bad}")
+
+        qs = cls.objects.filter(**attrs).order_by(*(cls.get_model_keys()), 'chunk_index')
+        if start or end:
+            qs = cls._filter_interval(qs, start, end)
+
+        current_key = None
+        buffer = []
+
+        def flush():
+            if not buffer:
+                return
+            serie = pd.concat(buffer)
+            if start or end:
+                serie = serie.loc[start:end]
+            key_dict = dict(zip(cls.get_model_keys(), current_key))
+            yield serie, key_dict
+            buffer.clear()
+
+        for row in qs.iterator(chunk_size=cls.ITER_CHUNK_SIZE):
+            key = tuple(getattr(row, k) for k in cls.get_model_keys())
+            if current_key is None:
+                current_key = key
+            elif key != current_key:
+                # nouvelle combinaison → on émet la série courante
+                yield from flush()
+                current_key = key
+            buffer.append(cls._decompress(row, mem_view=True))
+
+        # flush final
+        yield from flush()
 
     # -- private helpers --
 

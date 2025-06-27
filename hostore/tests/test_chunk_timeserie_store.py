@@ -215,17 +215,19 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
 
     def test_yield_ts(self):
         mapping = {
-            (6, "G"): self.make_series("2024-03-01", 24),
-            (6, "H"): self.make_series("2024-04-01", 24),
+            (6, "G"): self.make_series("2024-01-01", 24*390),
+            (6, "H"): self.make_series("2024-01-01", 24*390),
+            (6, "I"): self.make_series("2023-01-01", 24*366),
+            (5, "G"): self.make_series("2028-01-01", 24*15),
         }
         self.test_table.set_many_ts(mapping, keys=("version", "kind"), safe_insertion=self.safe_insertion)
         seen = {
-            (row.version, row.kind): serie
-            for serie, row in self.test_table.yield_many_ts({"version": 6})
+            (key_dict['version'], key_dict['kind']): serie
+            for serie, key_dict in self.test_table.yield_many_ts({"version": 6})
         }
-        self.assertEqual(set(seen.keys()), {(6, "G"), (6, "H")})
+        self.assertEqual(set(seen.keys()), {(6, "G"), (6, "H"), (6, "I")})
         for key, serie in seen.items():
-            assert_series_equal(serie.tz_convert('Europe/Paris'), mapping[key].tz_convert('Europe/Paris'))
+            assert_series_equal(serie, mapping[key])
 
     def test_invalid_calls(self):
         serie = self.make_series("2025-01-01", 24)
