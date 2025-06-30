@@ -233,7 +233,7 @@ class TimeseriesChunkStore(models.Model):
                 # nouvelle combinaison → on émet la série courante
                 yield from flush()
                 current_values = values
-            buffer.append(cls._decompress(row, mem_view=True))
+            buffer.append(cls._decompress(row))
 
         # flush final
         yield from flush()
