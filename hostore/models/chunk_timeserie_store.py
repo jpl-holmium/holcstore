@@ -68,7 +68,7 @@ class TimeseriesChunkStore(models.Model):
     # -- public --
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,
-               update=False, replace=False, safe_insertion=False):
+               update=False, replace=False):
         """
         Insère ou met à jour une série dense.
         attrs contient uniquement les clés métier (version/kind/...).
@@ -77,7 +77,7 @@ class TimeseriesChunkStore(models.Model):
             raise ValueError('update and replace are mutually exclusive')
         cls._ensure_all_attrs_specified(attrs)
         update_or_replace = update or replace
-        serie = cls._normalize_index(serie, safe_insertion)
+        serie = cls._normalize_index(serie)
         if serie is None:
             return
         if replace:
@@ -122,8 +122,7 @@ class TimeseriesChunkStore(models.Model):
         return full
 
     @classmethod
-    def set_many_ts(cls, mapping: dict[tuple, pd.Series],
-                    keys: tuple[str, ...], safe_insertion=False):
+    def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...]):
         """
         mapping : {(k1,k2,...): serie}
         keys    : ('version','kind',...)
@@ -132,7 +131,7 @@ class TimeseriesChunkStore(models.Model):
         for ktuple, serie in mapping.items():
             attrs = dict(zip(keys, ktuple))
             cls._ensure_all_attrs_specified(attrs)
-            serie = cls._normalize_index(serie, safe_insertion)
+            serie = cls._normalize_index(serie)
             if serie is None:
                 continue
             for sub in cls._chunk(serie):
@@ -185,21 +184,31 @@ class TimeseriesChunkStore(models.Model):
     # -- private helpers --
 
     @classmethod
-    def _normalize_index(cls, serie: pd.Series, safe_insertion: bool) -> Union[None, pd.Series]:
+    def _normalize_index(cls, serie: pd.Series) -> Union[None, pd.Series]:
         if not isinstance(serie.index, pd.DatetimeIndex):
             raise ValueError('Index doit être DatetimeIndex.')
+
+        if serie.isnull().all():
+            return None
+
         if serie.index.tz is None:
             logger.warning('Saving serie without tz may lead to inconsistent results')
             serie = serie.tz_localize(cls.STORE_TZ)
         else:
             serie = serie.tz_convert(cls.STORE_TZ)
 
-        if safe_insertion:
-            new_index = pd.date_range(start=serie.index[0], end=serie.index[-1], freq=cls.STORE_FREQ)
-            serie = serie.reindex(new_index)
+        first = serie.index[0]
+        last = serie.index[-1]
+        if cls.CHUNK_AXIS == ('year',):
+            start = first.replace(month=1, day=1, hour=0, minute=0)
+            end   = last + pd.offsets.YearEnd() + pd.offsets.Day()
+        else:  # ('year','month')
+            start = first.replace(day=1, hour=0, minute=0)
+            end   = last + pd.offsets.MonthEnd() + pd.offsets.Day()
 
-        if serie.isnull().all():
-            return None
+        new_index = pd.date_range(start=start, end=end, inclusive='left',freq=cls.STORE_FREQ)
+        serie = serie.reindex(new_index)
+
         return serie
 
     @classmethod
@@ -227,7 +236,7 @@ class TimeseriesChunkStore(models.Model):
             getattr(serie.index, ax) for ax in cls.CHUNK_AXIS
         ])
         for _, sub in grouper:
-            yield cls._complete_chunk(sub)
+            yield sub
 
     @classmethod
     def _chunk_index(cls, ts):
