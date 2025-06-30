@@ -203,11 +203,23 @@ class TimeseriesChunkStore(models.Model):
         return serie
 
     @classmethod
-    def _chunk(cls, serie: pd.Series):
-        return cls.__chunk_pd(serie)
+    def _complete_chunk(cls, sub: pd.Series) -> pd.Series:
+        """
+        Re-indexe `sub` pour couvrir l’intégralité du mois ou de l’année
+        correspondante, en insérant des NaN là où il manquait des pas.
+        """
+        first = sub.index[0].tz_convert(cls.STORE_TZ)
+        if cls.CHUNK_AXIS == ('year',):
+            start = first.replace(month=1, day=1, hour=0, minute=0)
+            end   = start + pd.offsets.YearEnd() + pd.offsets.Day()
+        else:  # ('year','month')
+            start = first.replace(day=1, hour=0, minute=0)
+            end   = start + pd.offsets.MonthEnd() + pd.offsets.Day()
+        full_idx = pd.date_range(start, end, inclusive='left', freq=cls.STORE_FREQ, tz=cls.STORE_TZ)
+        return sub.reindex(full_idx)
 
     @classmethod
-    def __chunk_pd(cls, serie: pd.Series):
+    def _chunk(cls, serie: pd.Series):
         if not cls.CHUNK_AXIS:
             yield serie
             return
@@ -215,22 +227,7 @@ class TimeseriesChunkStore(models.Model):
             getattr(serie.index, ax) for ax in cls.CHUNK_AXIS
         ])
         for _, sub in grouper:
-            yield sub
-
-    @classmethod
-    def __chunk_numpy(cls, serie: pd.Series):
-        idx = serie.index
-        if cls.CHUNK_AXIS == ('year',):
-            keys = idx.year
-        else:  # ('year','month')
-            keys = idx.year * 12 + idx.month - 1
-
-        # repérage des frontières
-        change = np.where(np.diff(keys) != 0)[0] + 1
-        splits = np.split(np.arange(len(serie)), change)
-
-        for sl in splits:
-            yield serie.iloc[sl]
+            yield cls._complete_chunk(sub)
 
     @classmethod
     def _chunk_index(cls, ts):
