@@ -307,8 +307,13 @@ class TimeseriesChunkStore(models.Model):
     def _filter_interval(cls, qs, start, end):
         if isinstance(start, str):
             start = pd.Timestamp(start, tz=cls.STORE_TZ)
+        else:
+            start = pd.Timestamp(start).tz_convert(cls.STORE_TZ)
         if isinstance(end, str):
             end = pd.Timestamp(end, tz=cls.STORE_TZ)
+        else:
+            end = pd.Timestamp(end).tz_convert(cls.STORE_TZ)
+
         if start:
             qs = qs.filter(chunk_index__gte=cls._chunk_index(start))
         if end:

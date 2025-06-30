@@ -33,6 +33,17 @@ class TestStoreChunkYearMonth(TimeseriesChunkStore):
         unique_together = ("version", "kind", "chunk_index")
 
 
+class TestStoreChunkYearMonthUTC(TimeseriesChunkStore):
+    version = models.IntegerField()
+    kind = models.CharField(max_length=50)
+    CHUNK_AXIS = ('year', 'month')
+    STORE_TZ = 'UTC'
+
+    class Meta:
+        app_label = "ts_inline"
+        managed = True
+        unique_together = ("version", "kind", "chunk_index")
+
 class TestStoreChunkYear(TimeseriesChunkStore):
     version = models.IntegerField()
     kind = models.CharField(max_length=50)
@@ -268,6 +279,15 @@ class TestTimeseriesWith2ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
     """
     __unittest_skip__ = False
     test_table = TestStoreChunkYearMonth
+    year_count_expected = 12
+
+class TestTimeseriesWith2ChunkUTCTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year Month
+    Table en UTC
+    """
+    __unittest_skip__ = False
+    test_table = TestStoreChunkYearMonthUTC
     year_count_expected = 12
 
 class TestTimeseriesWith1ChunkWithNanTestCase(BaseTimeseriesChunkStoreTestCase):
