@@ -2,10 +2,12 @@ import logging
 from typing import Union
 from zoneinfo import ZoneInfo
 
+import pytz
 from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
+from pytz.exceptions import UnknownTimeZoneError
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +30,12 @@ class TimeseriesChunkStore(models.Model):
     data = models.BinaryField()
 
     # Paramètres haut niveau
-    CHUNK_AXIS = ('year', 'month')   # config. par classe enfant. configs : ('year',) ('year', 'month')
-    STORE_TZ   = 'Europe/Paris'
-    STORE_FREQ   = '1h'
-    ITER_CHUNK_SIZE = 500
-    BULK_CREATE_BATCH_SIZE = 500
+    _ALLOWED_CHUNK_AXIS = {('year',), ('year', 'month')}
+    CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
+    STORE_TZ   = 'Europe/Paris' # Chunking timezone
+    STORE_FREQ   = '1h' # Timeseries storage frequency.
+    ITER_CHUNK_SIZE = 200
+    BULK_CREATE_BATCH_SIZE = 200
     _model_keys = None
 
     class Meta:
@@ -46,6 +49,29 @@ class TimeseriesChunkStore(models.Model):
             cls._model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
         return cls._model_keys
 
+    # valeurs de chunk autorisées
+    def __init_subclass__(cls, **kwargs):
+        """Valide les options de classe au moment où la sous-classe est créée."""
+        super().__init_subclass__(**kwargs)
+        # validate CHUNK_AXIS
+        if tuple(getattr(cls, "CHUNK_AXIS", ())) not in cls._ALLOWED_CHUNK_AXIS:
+            raise ValueError(
+                f"Invalid CHUNK_AXIS {cls.CHUNK_AXIS!r} for model {cls.__name__} — allowed: {cls._ALLOWED_CHUNK_AXIS}"
+            )
+        # validate STORE_FREQ
+        try:
+            pd.to_timedelta(cls.STORE_FREQ)
+        except ValueError:
+            raise ValueError(
+                f"Invalid STORE_FREQ {cls.STORE_FREQ!r} for model {cls.__name__}"
+            )
+        # validate STORE_TZ
+        try:
+            pytz.timezone(cls.STORE_TZ)
+        except UnknownTimeZoneError:
+            raise ValueError(
+                f"Invalid STORE_TZ {cls.STORE_TZ!r} for model {cls.__name__}"
+            )
     # ------------------ Sérialisation bas niveau ------------------
     @staticmethod
     def _compress(serie: pd.Series) -> (bytes, np.array):
@@ -70,8 +96,20 @@ class TimeseriesChunkStore(models.Model):
     def set_ts(cls, attrs: dict, serie: pd.Series,
                update=False, replace=False):
         """
-        Insère ou met à jour une série dense.
-        attrs contient uniquement les clés métier (version/kind/...).
+        Set a timeseries.
+        Warning:
+            * if replace=False and update=False, trying to insert over existing attrs will raise a
+          django.db.utils.IntegrityError
+            * All available fields of model must exist in attrs keys
+
+        Args:
+            attrs: attributes dict
+            serie: timeseries set
+            update: if True, update any existing series in database with provided one (combine_first).
+            replace: if True, replace existing series in database
+
+        Returns:
+
         """
         if update and replace:
             raise ValueError('update and replace are mutually exclusive')
@@ -96,9 +134,17 @@ class TimeseriesChunkStore(models.Model):
             cls._bulk_upsert(rows)
 
     @classmethod
-    def get_ts(cls, attrs: dict, start=None, end=None) -> None | pd.Series:
+    def get_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None) -> None | pd.Series:
         """
-        Récupère et recompose la série.
+        Extract timeseries data matching attrs.
+        Warning: all available fields of model must exist in attrs keys
+
+        Args:
+            attrs: filters of query
+            start: start index of timeseries
+            end: end index of timeseries
+
+        Returns: timeseries if exists, None otherwise
         """
         cls._ensure_all_attrs_specified(attrs)
         qs = cls.objects.filter(**attrs).order_by('chunk_index')
@@ -124,8 +170,17 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...]):
         """
-        mapping : {(k1,k2,...): serie}
-        keys    : ('version','kind',...)
+        Set many timeseries at once. User must clear matching filters upstream.
+        Warning:
+            * Trying to insert over existing attrs will raise a django.db.utils.IntegrityError
+            * All available fields of model must exist in attrs keys
+
+        Args:
+            mapping : {(version_value, kind_value,...): serie}
+            keys    : ('version','kind',...)
+
+        Returns:
+
         """
         rows = []
         for ktuple, serie in mapping.items():
@@ -139,12 +194,16 @@ class TimeseriesChunkStore(models.Model):
         cls._bulk_upsert(rows)
 
     @classmethod
-    def yield_many_ts(cls, attrs: dict, start=None, end=None):
+    def yield_many_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None):
         """
-        Génère (serie, attrs_dict) pour chaque combinaison métier
-        correspondant au filtre partial `attrs`.
-        - Ne garde jamais qu’une combinaison à la fois en mémoire.
-        - Respecte `start` / `end` (mêmes formats que get_ts).
+        Yield (serie, attrs_dict) for each available timeseries with filters matching attrs.
+            - serie will be expressed at STORE_FREQ, STORE_TZ
+            - attrs_dict : mapping {model_key: value}
+
+        Args:
+            attrs: filters of query
+            start: start index of timeseries
+            end: end index of timeseries
         """
         # On valide seulement les clés fournies
         bad = set(attrs) - cls.get_model_keys()
@@ -155,7 +214,7 @@ class TimeseriesChunkStore(models.Model):
         if start or end:
             qs = cls._filter_interval(qs, start, end)
 
-        current_key = None
+        current_values = None
         buffer = []
 
         def flush():
@@ -164,18 +223,18 @@ class TimeseriesChunkStore(models.Model):
             serie = pd.concat(buffer)
             if start or end:
                 serie = serie.loc[start:end]
-            key_dict = dict(zip(cls.get_model_keys(), current_key))
+            key_dict = dict(zip(cls.get_model_keys(), current_values))
             yield serie, key_dict
             buffer.clear()
 
         for row in qs.iterator(chunk_size=cls.ITER_CHUNK_SIZE):
-            key = tuple(getattr(row, k) for k in cls.get_model_keys())
-            if current_key is None:
-                current_key = key
-            elif key != current_key:
+            values = tuple(getattr(row, k) for k in cls.get_model_keys())
+            if current_values is None:
+                current_values = values
+            elif values != current_values:
                 # nouvelle combinaison → on émet la série courante
                 yield from flush()
-                current_key = key
+                current_values = values
             buffer.append(cls._decompress(row, mem_view=True))
 
         # flush final
@@ -185,6 +244,13 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _normalize_index(cls, serie: pd.Series) -> Union[None, pd.Series]:
+        """
+        normalize index of serie by reindexing over chunking grid
+        Args:
+            serie: initial serie
+
+        Returns: transformed serie
+        """
         if not isinstance(serie.index, pd.DatetimeIndex):
             raise ValueError('Index doit être DatetimeIndex.')
 
@@ -212,22 +278,6 @@ class TimeseriesChunkStore(models.Model):
         return serie
 
     @classmethod
-    def _complete_chunk(cls, sub: pd.Series) -> pd.Series:
-        """
-        Re-indexe `sub` pour couvrir l’intégralité du mois ou de l’année
-        correspondante, en insérant des NaN là où il manquait des pas.
-        """
-        first = sub.index[0].tz_convert(cls.STORE_TZ)
-        if cls.CHUNK_AXIS == ('year',):
-            start = first.replace(month=1, day=1, hour=0, minute=0)
-            end   = start + pd.offsets.YearEnd() + pd.offsets.Day()
-        else:  # ('year','month')
-            start = first.replace(day=1, hour=0, minute=0)
-            end   = start + pd.offsets.MonthEnd() + pd.offsets.Day()
-        full_idx = pd.date_range(start, end, inclusive='left', freq=cls.STORE_FREQ, tz=cls.STORE_TZ)
-        return sub.reindex(full_idx)
-
-    @classmethod
     def _chunk(cls, serie: pd.Series):
         if not cls.CHUNK_AXIS:
             yield serie
@@ -240,19 +290,25 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _chunk_index(cls, ts):
+        """ Compute chunk_index value """
         if cls.CHUNK_AXIS == ('year',):
             return ts.year
+        # else ('year','month')
         return ts.year * 12 + ts.month - 1
 
     @classmethod
     def _build_row(cls, attrs, serie):
+        """
+        Build db object row from serie
+        serie must be chunked and normalized
+        """
         compressed, arr = cls._compress(serie)
         first_ts = serie.index[0]
         return cls(
             **attrs,
             chunk_index=cls._chunk_index(first_ts),
             start_ts=first_ts,
-            length=len(arr),
+            length=arr.size,
             tz=str(serie.index.tz),
             dtype=str(arr.dtype),
             data=compressed

@@ -2,7 +2,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 import pytz
-from django.db import models, connection
+from django.db import models, connection, IntegrityError
 from django.test import TransactionTestCase
 
 from hostore.models import TimeseriesChunkStore
@@ -142,6 +142,11 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         got = self.test_table.get_ts(attrs)
         assert_series_equal(got, serie_b)
 
+        # try re set other
+        serie_c = self.make_series("2020-01-01", 24 * 365)
+        with self.assertRaises(IntegrityError):
+            self.test_table.set_ts(attrs, serie_c)
+
         # nonexistent
         got = self.test_table.get_ts({"version": 1, "kind": "nonexistent"})
         self.assertEqual(got, None)
@@ -238,6 +243,8 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
             got = self.test_table.get_ts({"version": v, "kind": k})
             assert_series_equal(got, serie)
 
+        with self.assertRaises(IntegrityError):
+            self.test_table.set_many_ts(mapping, keys=("version", "kind"))
     def test_yield_ts(self):
         mapping = {
             (6, "G"): self.make_series("2024-01-01", 24*390),
