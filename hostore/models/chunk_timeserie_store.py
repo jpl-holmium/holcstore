@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
 # TODO automatiser la génération de ces clef ? source d'erreur possible
-KEYS_ABSTRACT_CLASS = {'id', 'tz', 'length', 'start_ts', 'data', 'dtype', 'chunk_index'}
+KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'chunk_index'}
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
@@ -22,8 +22,6 @@ class TimeseriesChunkStore(models.Model):
 
     # Métadonnées obligatoires
     start_ts = models.DateTimeField()        # premier timestamp inclus
-    length   = models.IntegerField()         # nb. d’éléments
-    tz       = models.CharField(max_length=48, default='UTC')
     dtype    = models.CharField(max_length=16)  # ex. 'float64'
 
     # Données brutes
@@ -308,8 +306,6 @@ class TimeseriesChunkStore(models.Model):
             **attrs,
             chunk_index=cls._chunk_index(first_ts),
             start_ts=first_ts,
-            length=arr.size,
-            tz=str(serie.index.tz),
             dtype=str(arr.dtype),
             data=compressed
         )
@@ -339,8 +335,6 @@ class TimeseriesChunkStore(models.Model):
         # dict pour defaults
         defaults = {
             'start_ts': row.start_ts,
-            'length': row.length,
-            'tz': row.tz,
             'dtype': row.dtype,
             'data': row.data,
         }
@@ -363,7 +357,7 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _rebuild_index(cls, row, length):
-        start = row.start_ts.astimezone(ZoneInfo(row.tz))
+        start = row.start_ts.astimezone(ZoneInfo(cls.STORE_TZ))
         return pd.date_range(start=start,
                              periods=length,
                              freq=cls.STORE_FREQ)

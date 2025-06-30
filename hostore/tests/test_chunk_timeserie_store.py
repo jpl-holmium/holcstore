@@ -226,12 +226,20 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         """
         s1 = self.make_series("2022-01-01", 365*24)
         s2 = self.make_series("2022-06-01", 380*24, seed=42)
+        s3 = self.make_series("2022-06-01", 381*24, seed=43)
+        s4 = self.make_series("2022-06-01", 420*24, seed=44)
+        s5 = self.make_series("2026-06-01", 365*24, seed=44)
         attrs = {"version": 4, "kind": "D2"}
 
         self.test_table.set_ts(attrs, s1)
         self.test_table.set_ts(attrs, s2, update=True)
-
         assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]))
+        self.test_table.set_ts(attrs, s3, update=True)
+        assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s3, s2, s1]))
+        self.test_table.set_ts(attrs, s4, update=True)
+        assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s4, s3, s2, s1]))
+        self.test_table.set_ts(attrs, s5, update=True)
+        assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s5, s4, s3, s2, s1]))
 
     def test_set_many_ts(self):
         mapping = {
