@@ -1,5 +1,5 @@
 import logging
-from typing import Union
+from typing import Union, List
 from zoneinfo import ZoneInfo
 
 import pytz
@@ -23,6 +23,7 @@ class TimeseriesChunkStore(models.Model):
     # Métadonnées obligatoires
     start_ts = models.DateTimeField()        # premier timestamp inclus
     dtype    = models.CharField(max_length=16)  # ex. 'float64'
+    updated_at = models.DateTimeField(auto_now=True)  # synchro
 
     # Données brutes
     data = models.BinaryField()
@@ -42,7 +43,8 @@ class TimeseriesChunkStore(models.Model):
         abstract = True
 
     @classmethod
-    def get_model_keys(cls):
+    def get_model_keys(cls) -> List[str]:
+        """ Returns the list of the keys added to the non abstract class """
         if cls._model_keys is None:
             cls._model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
         return cls._model_keys
@@ -89,7 +91,10 @@ class TimeseriesChunkStore(models.Model):
         idx = cls._rebuild_index(row, len(arr))
         return pd.Series(arr, index=idx)
 
-    # -- public --
+    # ------------------------------------------------------------------
+    # PUBLIC METHODS
+    # ------------------------------------------------------------------
+
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,
                update=False, replace=False):
@@ -238,6 +243,74 @@ class TimeseriesChunkStore(models.Model):
         # flush final
         yield from flush()
 
+    # ------------------------------------------------------------------
+    #  SYNC CLIENT ⇆ SERVER
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def list_updates(cls, since: pd.Timestamp) -> list[dict]:
+        """
+        Retourne la liste des chunks modifiés depuis `since`.
+
+        Chaque élément contient :
+            {
+              "attrs": {<clé métier>: valeur, ...},
+              "chunk_index":  int,
+              "dtype":        str,
+              "start_ts":     ISO-8601,
+              "updated_at":   ISO-8601
+            }
+        """
+        qs = (cls.objects
+              .filter(updated_at__gt=since)
+              .values(*cls.get_model_keys(),
+                      "chunk_index", "dtype",
+                      "start_ts", "updated_at"))
+        out = []
+        for row in qs:
+            out.append({
+                "attrs": {k: row[k] for k in cls.get_model_keys()},
+                "chunk_index": row["chunk_index"],
+                "dtype": row["dtype"],
+                "start_ts": row["start_ts"].isoformat(),
+                "updated_at": row["updated_at"].isoformat(),
+            })
+        return out
+
+    @classmethod
+    def export_chunks(cls, spec: list[dict]) -> list[tuple]:
+        """
+        Reçoit une liste :
+            [{"attrs": {...}, "chunk_index": 12}, ...]
+        Renvoie une liste de tuples :
+            (blob_lz4: bytes, attrs: dict, meta: dict)
+        Le serveur ne décompresse rien.
+        """
+        out = []
+        for item in spec:
+            attrs = item["attrs"]
+            idx = item["chunk_index"]
+            row = cls.objects.get(**attrs, chunk_index=idx)
+            blob = row.data
+            meta = {"dtype": row.dtype, "start_ts": row.start_ts}
+            out.append((blob, attrs, meta))
+        return out
+
+    @classmethod
+    def import_chunks(cls, payload: list[tuple]):
+        """
+        Ingère la liste produite par export_chunks côté client.
+        Chaque tuple : (blob_lz4, attrs, meta)
+        Ajout ou update chunk par chunk.
+        """
+        for blob, attrs, meta in payload:
+            cls._ensure_all_attrs_specified(attrs)
+            idx = cls._chunk_index(pd.Timestamp(meta["start_ts"]))
+            cls.objects.update_or_create(
+                defaults=dict(data=blob, **meta),
+                **attrs, chunk_index=idx
+            )
+
     # -- private helpers --
 
     @classmethod
@@ -384,12 +457,6 @@ class TimeseriesChunkStore(models.Model):
         """
         Vérifie que l'utilisateur a renseigné tous les attributs "métiers"
         """
-        # # check version 2
-        # check = qs.values('chunk_index').annotate(count=Count('id')).filter(count__gt=1)
-        # if check.exists():
-        #     raise ValueError
-
-        # check version 1
         attrs_keys = set(attrs.keys())
         model_keys = cls.get_model_keys()
         if model_keys != attrs_keys:
