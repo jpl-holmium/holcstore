@@ -23,7 +23,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     store_model: Type['TimeseriesChunkStore'] = None
 
     # 1) /updates/?since=ISO
-    def list(self, request):
+    def updates(self, request):
         since = pd.Timestamp(request.query_params["since"])
         data  = self.store_model.list_updates(since)
         return Response(data)
@@ -65,7 +65,8 @@ class TimeseriesChunkStoreSyncClient:
         self.local    = local_model
 
     # ----------- pull depuis le serveur -------------------------------
-    def pull(self, since: pd.Timestamp, batch=50):
+    def pull(self, batch=50):
+        since = self.local.last_updated_at()
         updates = requests.get(
             f"{self.endpoint}/updates/",
             params={"since": since.isoformat()}
@@ -79,19 +80,3 @@ class TimeseriesChunkStoreSyncClient:
                 for item in pack
             ]
             self.local.import_chunks(tuples)
-
-    # # ----------- push vers le serveur ---------------------------------
-    # def push(self, since: pd.Timestamp, batch=50):
-    #     outgoing = self.local.list_updates(since)   # mêmes clés que sur serveur
-    #
-    #     for i in range(0, len(outgoing), batch):
-    #         spec   = outgoing[i:i+batch]
-    #         chunks = self.local.export_chunks(spec)
-    #         payload = [
-    #             {
-    #                 "blob":  base64.b64encode(b).decode(),
-    #                 "attrs": attrs,
-    #                 "meta":  meta,
-    #             } for b, attrs, meta in chunks
-    #         ]
-    #         requests.put(f"{self.endpoint}/pack/", json=payload)

@@ -1,3 +1,4 @@
+import datetime as dt
 import logging
 from typing import Union, List
 from zoneinfo import ZoneInfo
@@ -7,7 +8,10 @@ from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
+from django.db.models.aggregates import Max
 from pytz.exceptions import UnknownTimeZoneError
+from hostore.utils.timeseries import _localise_date
+
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +98,16 @@ class TimeseriesChunkStore(models.Model):
     # ------------------------------------------------------------------
     # PUBLIC METHODS
     # ------------------------------------------------------------------
+
+    @classmethod
+    def last_updated_at(cls):
+        """
+        Retreive the last updated timestamp from the database.
+        """
+        cursor = (cls.objects.all()
+                  .aggregate(last=Max("updated_at")))["last"] \
+                 or _localise_date(dt.datetime(2000, 1, 1))
+        return cursor
 
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,

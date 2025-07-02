@@ -1,25 +1,11 @@
 import datetime as dt
 import numpy as np
 import pandas as pd
-import pytz
 from django.db import models, connection, IntegrityError
 from django.test import TransactionTestCase
 
 from hostore.models import TimeseriesChunkStore
-from hostore.utils.timeseries import ts_combine_first
-
-
-TZ_PARIS = 'Europe/Paris'
-
-def localise_date(pydate, time=dt.time(), timezone_name=TZ_PARIS):
-    if timezone_name is None:
-        return dt.datetime.combine(pydate, time)
-    else:
-        return pytz.timezone(timezone_name).localize(dt.datetime.combine(pydate, time))
-
-def localise_date_interval(date_start, date_end, timezone_name=TZ_PARIS):
-    return (localise_date(date_start, timezone_name=timezone_name),
-            localise_date(date_end, time=dt.time.max, timezone_name=timezone_name))
+from hostore.utils.timeseries import ts_combine_first, _localise_date_interval
 
 
 class TestStoreChunkYearMonth(TimeseriesChunkStore):
@@ -173,7 +159,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         serie = self.make_series("2019-01-01", 24 * 365)
         attrs = {"version": 3, "kind": "C"}
         self.test_table.set_ts(attrs, serie)
-        start, end = localise_date_interval(dt.date(2019,6,1), dt.date(2019,6,2))
+        start, end = _localise_date_interval(dt.date(2019, 6, 1), dt.date(2019, 6, 2))
         sub = self.test_table.get_ts(attrs, start=start, end=end)
         expected = serie[start:end]
         assert_series_equal(sub, expected)
