@@ -134,7 +134,6 @@ class TimeseriesChunkStore(models.Model):
         if update and replace:
             raise ValueError('update and replace are mutually exclusive')
         cls._ensure_all_attrs_specified(attrs)
-        update_or_replace = update or replace
         serie = cls._normalize_index(serie)
         if serie is None:
             return
@@ -145,12 +144,12 @@ class TimeseriesChunkStore(models.Model):
         # Enregistrement par chunk
         rows = []
         for sub in cls._chunk(serie):
-            if update_or_replace:
-                cls._upsert_chunk_update_or_replace(attrs, sub, update, replace)
+            if update:
+                cls._update_chunk_with_existing(attrs, sub)
             else:
                 rows.append(cls._build_row(attrs, sub))
 
-        if not update_or_replace:
+        if not update:
             cls._bulk_upsert(rows)
 
     @classmethod
@@ -401,26 +400,23 @@ class TimeseriesChunkStore(models.Model):
         )
 
     @classmethod
-    def _upsert_chunk_update_or_replace(cls, attrs, serie, update, replace):
-        row = cls._build_row(attrs, serie)
-        attributes_fields = [*attrs.keys(), 'chunk_index']
-        attributes = {f: getattr(row, f) for f in attributes_fields}
+    def _update_chunk_with_existing(cls, attrs, serie):
+        attributes = {**attrs, 'chunk_index': cls._chunk_index(serie.index[0])}
 
-        if update:
-            # combine first with existing
-            qs = cls.objects.filter(**attributes)
-            if qs.count() == 0:
-                pass
-            elif qs.count() == 1:
-                row = qs.first()
-                ds_existing = cls._decompress(row)
-                # tz_convert UTC : avoid nan insertion at october tz switch
-                serie.index = serie.index.tz_convert('UTC')
-                ds_existing.index = ds_existing.index.tz_convert('UTC')
-                ds_new = serie.combine_first(ds_existing)
-                row = cls._build_row(attrs, ds_new)
-            else:
-                raise ValueError(f'Multiple chunks found for attributes {attributes} with update={update}')
+        # combine first with existing
+        qs = cls.objects.filter(**attributes)
+        if qs.count() == 0:
+            row = cls._build_row(attrs, serie)
+        elif qs.count() == 1:
+            row = qs.first()
+            ds_existing = cls._decompress(row)
+            # tz_convert UTC : avoid nan insertion at october tz switch
+            serie.index = serie.index.tz_convert('UTC')
+            ds_existing.index = ds_existing.index.tz_convert('UTC')
+            ds_new = serie.combine_first(ds_existing)
+            row = cls._build_row(attrs, ds_new)
+        else:
+            raise ValueError(f'Multiple chunks found for attributes {attributes}')
 
         # dict pour defaults
         defaults = {
