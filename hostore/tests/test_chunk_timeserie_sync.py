@@ -1,10 +1,12 @@
 import base64, datetime as dt
+from unittest.mock import patch
 
+import requests
 from django.db import connection, models
 from django.test import TransactionTestCase, override_settings
 from django.urls import path, include
 from rest_framework.routers import SimpleRouter
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, RequestsClient
 import pandas as pd
 import numpy as np
 import lz4.frame
@@ -63,22 +65,32 @@ class SyncIntegrationTestCase(TransactionTestCase):
                 if mdl._meta.db_table not in connection.introspection.table_names():
                     se.create_model(mdl)
         RemoteYearStore.objects.all().delete()
-        self.store_client = TimeseriesChunkStoreSyncClient(endpoint='/sync/year', store_model=LocalYearStore)
+        self.store_client = TimeseriesChunkStoreSyncClient(endpoint='http://testserver/sync/year', store_model=LocalYearStore)
         LocalYearStore.objects.all().delete()
-        self.client = APIClient()
+        self.req_client = RequestsClient()
+        self.req_client.base_url = "http://testserver/"
+        # self.client = APIClient()
 
     def _sync(self):
-        # client → /updates
-        since = LocalYearStore.last_updated_at()
-        updates = self.client.get("/sync/year/updates/", {"since": since.isoformat()}).json()
-        # client → /pack export
-        pack = self.client.post("/sync/year/pack/", updates, format="json").json()
-        # import côté local
-        tuples = [
-            (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
-            for item in pack
-        ]
-        LocalYearStore.import_chunks(tuples)
+
+        # # METHODE AVEC APICLIENT client → /updates
+        # since = LocalYearStore.last_updated_at()
+        # updates = self.client.get("/sync/year/updates/", {"since": since.isoformat()}).json()
+        # # client → /pack export
+        # pack = self.client.post("/sync/year/pack/", updates, format="json").json()
+        # # import côté local
+        # tuples = [
+        #     (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
+        #     for item in pack
+        # ]
+        # LocalYearStore.import_chunks(tuples)
+
+        with (
+            patch.object(requests, "get",  self.req_client.get),
+            patch.object(requests, "post", self.req_client.post),
+            patch.object(requests, "put",  self.req_client.put),
+        ):
+            self.store_client.pull(batch=20)
 
     # --------------------------------------------------------------
     def test_full_sync_and_update(self):
