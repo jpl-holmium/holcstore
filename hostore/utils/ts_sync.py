@@ -10,7 +10,9 @@ from typing import Type
 
 class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     """
-    Base ViewSet for server side to synchronize time series data from a TimeseriesChunkStore
+    Base ViewSet for server side to synchronize time series data from a TimeseriesChunkStore :
+        - client call updates
+        -
 
     Example (view.py) :
 
@@ -23,33 +25,25 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     store_model: Type['TimeseriesChunkStore'] = None
 
     # 1) /updates/?since=ISO
+    @action(detail=False, methods=["get"])
     def updates(self, request):
         since = pd.Timestamp(request.query_params["since"])
         data  = self.store_model.list_updates(since)
         return Response(data)
 
-    # 2) /pack/   POST → export ;  PUT → import
-    @action(detail=False, methods=["post", "put"])
+    # 2) /pack/   POST → export
+    @action(detail=False, methods=["post"])
     def pack(self, request):
-        if request.method == "POST":          # export
-            spec    = request.data
-            chunks  = self.store_model.export_chunks(spec)
-            payload = [
-                {
-                    "blob":  base64.b64encode(b).decode(),
-                    "attrs": attrs,
-                    "meta":  meta,
-                } for b, attrs, meta in chunks
-            ]
-            return Response(payload)
-
-        # import
+        spec    = request.data
+        chunks  = self.store_model.export_chunks(spec)
         payload = [
-            (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
-            for item in request.data
+            {
+                "blob":  base64.b64encode(b).decode(),
+                "attrs": attrs,
+                "meta":  meta,
+            } for b, attrs, meta in chunks
         ]
-        self.store_model.import_chunks(payload)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(payload)
 
     @classmethod
     def as_factory(cls, model):

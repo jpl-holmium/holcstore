@@ -10,7 +10,7 @@ import numpy as np
 import lz4.frame
 
 from hostore.models import TimeseriesChunkStore
-from hostore.utils.ts_sync import TimeseriesChunkStoreSyncViewSet
+from hostore.utils.ts_sync import TimeseriesChunkStoreSyncViewSet, TimeseriesChunkStoreSyncClient
 
 
 # ------------------------------------------------------------------
@@ -63,36 +63,67 @@ class SyncIntegrationTestCase(TransactionTestCase):
                 if mdl._meta.db_table not in connection.introspection.table_names():
                     se.create_model(mdl)
         RemoteYearStore.objects.all().delete()
+        self.store_client = TimeseriesChunkStoreSyncClient(endpoint='/sync/year', store_model=LocalYearStore)
         LocalYearStore.objects.all().delete()
         self.client = APIClient()
 
-    # --------------------------------------------------------------
-    def test_full_sync(self):
-        # 1) seed serveur
-        serie = self._make_series("2025-01-01", 24 * 31)
-        attrs = {"version": 1, "kind": "A"}
-        RemoteYearStore.set_ts(attrs, serie)
-
-        # 2) client → /updates
-        since = pd.Timestamp("2000-01-01", tz="UTC")
+    def _sync(self):
+        # client → /updates
+        since = LocalYearStore.last_updated_at()
         updates = self.client.get("/sync/year/updates/", {"since": since.isoformat()}).json()
-        self.assertEqual(len(updates), 1)
-        spec = updates
-
-        # 3) client → /pack export
-        pack = self.client.post("/sync/year/pack/", spec, format="json").json()
-        self.assertEqual(len(pack), 1)
-
-        # 4) import côté local
+        # client → /pack export
+        pack = self.client.post("/sync/year/pack/", updates, format="json").json()
+        # import côté local
         tuples = [
             (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
             for item in pack
         ]
         LocalYearStore.import_chunks(tuples)
 
-        # 5) vérif intégrité
-        got = LocalYearStore.get_ts(attrs)
-        pd.testing.assert_series_equal(got, serie)
+    # --------------------------------------------------------------
+    def test_full_sync_and_update(self):
+        # seed serveur
+        sere_a1_v1 = self._make_series("2025-01-01", 24 * 31 * 4)
+        sere_a2_v1 = self._make_series("2026-01-05", 24 * 50)
+        series = (
+            ({"version": 1, "kind": "A"}, sere_a1_v1),
+            ({"version": 2, "kind": "A"}, sere_a2_v1),
+            ({"version": 2, "kind": "B"}, self._make_series("2024-01-05", 24 * 50)),
+            ({"version": 2, "kind": "c"}, self._make_series("2000-01-05", 24 * 50)),
+        )
+        for attr, serie in series:
+            RemoteYearStore.set_ts(attr, serie)
+
+        self._sync()
+
+        # vérif intégrité 1
+        for attr, serie in series:
+            got = LocalYearStore.get_ts(attr)
+            got = got[got.notnull()]
+            pd.testing.assert_series_equal(got, serie)
+
+        # update server
+        sere_a1_v2 = self._make_series("2025-02-01", 24 * 31 * 4)
+        sere_a2_v2 = self._make_series("2026-03-01", 24 * 31 * 4)
+        series2 = (
+            ({"version": 1, "kind": "A"}, sere_a1_v2),
+            ({"version": 2, "kind": "A"}, sere_a2_v2),
+        )
+        for attr, serie in series2:
+            RemoteYearStore.set_ts(attr, serie, update=True)
+
+        self._sync()
+
+        series_verif = [
+            ({"version": 1, "kind": "A"}, sere_a1_v2.combine_first(sere_a1_v1)),
+            ({"version": 2, "kind": "A"}, sere_a2_v2.combine_first(sere_a2_v1)),
+            series[2], series[3],
+        ]
+        # vérif intégrité 2
+        for attr, serie in series_verif:
+            got = LocalYearStore.get_ts(attr)
+            got = got[got.notnull()]
+            pd.testing.assert_series_equal(got, serie)
 
     # --------------------------------------------------------------
     @staticmethod

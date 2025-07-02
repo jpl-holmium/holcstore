@@ -105,10 +105,12 @@ class TimeseriesChunkStore(models.Model):
         """
         Retreive the last updated timestamp from the database.
         """
-        cursor = (cls.objects.all()
-                  .aggregate(last=Max("updated_at")))["last"] \
-                 or _localise_date(dt.datetime(2000, 1, 1))
-        return cursor
+        qs = cls.objects.all()
+        if qs.exists():
+            # return qs.aggregate(last=Max("updated_at"))["last"]
+            return qs.order_by('-updated_at').first().updated_at
+        else:
+            return _localise_date(dt.datetime(2000, 1, 1))
 
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,
@@ -353,10 +355,10 @@ class TimeseriesChunkStore(models.Model):
         last = serie.index[-1]
         if cls.CHUNK_AXIS == ('year',):
             start = first.replace(month=1, day=1, hour=0, minute=0)
-            end   = last + pd.offsets.YearEnd() + pd.offsets.Day()
+            end   = last.replace(day=1, hour=0, minute=0) + pd.offsets.YearEnd() + pd.offsets.Day()
         else:  # ('year','month')
             start = first.replace(day=1, hour=0, minute=0)
-            end   = last + pd.offsets.MonthEnd() + pd.offsets.Day()
+            end   = last.replace(day=1, hour=0, minute=0) + pd.offsets.MonthEnd() + pd.offsets.Day()
 
         new_index = pd.date_range(start=start, end=end, inclusive='left',freq=cls.STORE_FREQ)
         serie = serie.reindex(new_index)
