@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
 # TODO automatiser la génération de ces clef ? source d'erreur possible
-KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'chunk_index'}
+KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'chunk_index'}
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
@@ -43,6 +43,7 @@ class TimeseriesChunkStore(models.Model):
 
     class Meta:
         # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_index'] au unique together
+        # todo classe enfant indexation par updated_at chunk_index et clef métier
         unique_together = ['chunk_index']
         abstract = True
 

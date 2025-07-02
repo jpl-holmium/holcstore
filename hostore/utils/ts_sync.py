@@ -51,22 +51,33 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
         self.store_model.import_chunks(payload)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @classmethod
+    def as_factory(cls, model):
+        """
+        Retourne dynamiquement un ViewSet déjà relié à `model`.
+        Exemple:
+            RemoteSync = TimeseriesChunkStoreSyncViewSet.as_factory(RemoteStore)
+        """
+        if not hasattr(model, "list_updates"):
+            raise TypeError("model must inherit TimeseriesChunkStore")
+        return type(f"{model.__name__}SyncViewSet", (cls,), {"store_model": model})
+
 
 class TimeseriesChunkStoreSyncClient:
     """
     client = TimeseriesChunkStoreSyncClient(
                 endpoint="https://api.example.com/ts/year/",
-                local_model=TestStoreChunkYear)
+                store_model=TestStoreChunkYear)
     client.pull(since) : récupère les nouveautés
     """
 
-    def __init__(self, *, endpoint: str, local_model):
+    def __init__(self, *, endpoint: str, store_model: Type['TimeseriesChunkStore']):
         self.endpoint = endpoint.rstrip("/")
-        self.local    = local_model
+        self.store_model    = store_model
 
     # ----------- pull depuis le serveur -------------------------------
     def pull(self, batch=50):
-        since = self.local.last_updated_at()
+        since = self.store_model.last_updated_at()
         updates = requests.get(
             f"{self.endpoint}/updates/",
             params={"since": since.isoformat()}
@@ -79,4 +90,4 @@ class TimeseriesChunkStoreSyncClient:
                 (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
                 for item in pack
             ]
-            self.local.import_chunks(tuples)
+            self.store_model.import_chunks(tuples)
