@@ -3,8 +3,9 @@
 HoLcStore is a Django app for creating a simple TimeSeries store in your database.
 
 <!-- TOC -->
-## Table of Contents
+# Table of Contents
 - [Getting Started](#getting-started)
+- [Choose the appropriate store](#choose-the-appropriate-store)
 - [Basic Usage : Store class](#basic-usage--store-class)
   - [Saving a timeserie to database](#saving-a-timeserie-to-database)
   - [Saving multiple timeseries to database](#saving-multiple-timeseries-to-database)
@@ -12,9 +13,10 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
 - [Basic Usage : TimeseriesStore class](#basic-usage-timeseriesstore-class)
   - [Define your class in models.py](#define-your-class-in-modelspy)
   - [Usage samples](#usage-samples)
+- [Basic Usage : TimeseriesChunkStore class](#basic-usage-timeserieschunkstore-class)
 <!-- /TOC -->
 
-## Getting Started
+# Getting Started
 
 1. Add "holcstore" to your INSTALLED_APPS setting like this
 ```python
@@ -36,8 +38,26 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
             abstract = False
             # add your meta
 ```
+# Choose the appropriate store
 
-## Basic Usage: Store class
+## Store class
+This class is used to store timeseries, using a key:value pattern. A prm key is used to reference the saved series.
+
+Handle update and replace features.
+
+## TimeseriesStore class
+This class is used to store timeseries, using a user provided pattern through its model.
+
+## TimeseriesStore class
+This class is used to store timeseries, using a user provided pattern through its model.
+
+Handle update and replace features.
+
+Store timeseries by chunk for a better performance with large timeseries.
+
+User friendly API to perform a client-server sync.
+
+# Basic Usage: Store class
 
 #### Saving a timeserie to database
 
@@ -96,7 +116,7 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
     datas = YourStore.get_lc(key, client_id, version=1)
 ```
 
-## Basic Usage: TimeseriesStore class
+# Basic Usage: TimeseriesStore class
 
 ### Define your class in models.py
 ```python
@@ -130,6 +150,90 @@ ds_ts = MyTimeseriesStore.get_ts(ts_attrs, flat=True)
 datas = MyTimeseriesStore.get_ts(ts_attrs)
 ds_ts1 = datas[0]['data']
 ```
+
+# Basic usage : TimeseriesChunkStore class
+## Compact time-series storage for Django + PostgreSQL
+
+**TimeseriesChunkStore** is an abstract Django model that lets you persist
+high-resolution time-series efficiently as compressed LZ4 blobs, while still
+querying them through the ORM.
+
+Main features
+=============
+
+| Feature                                    | Description |
+|--------------------------------------------|-------------|
+| **Chunking**                               | Split each series by `('year',)` or `('year','month')` so blobs stay small. |
+| **Compression**                            | Data saved as LZ4-compressed NumPy buffers; index is rebuilt on the fly. |
+| **Dense layout**                           | Each chunk is re-indexed on a regular grid (`STORE_FREQ`, `STORE_TZ`). |
+| **Smart upsert**                           | `set_ts(..., update=True)` merges with existing data via `combine_first`. |
+| **Bulk helpers**                           | `set_many_ts()` / `yield_many_ts()` for mass insert / streaming read. |
+| **Sync ready**                             | `list_updates`, `export_chunks`, `import_chunks` enable cheap client ↔ server replication. |
+| **REST scaffolding**                       | `TimeseriesChunkStoreSyncViewSet` + `TimeseriesChunkStoreSyncClient` give you plug-and-play API endpoints and a Python client. |
+
+Quick start
+===========
+### 1/ Define your store class
+```python
+# models.py
+class MyChunkedStore(TimeseriesChunkStore):
+    version = models.IntegerField()
+    kind    = models.CharField(max_length=20)
+
+    class Meta(TimeseriesChunkStore.Meta):
+        unique_together = ('version', 'kind', 'chunk_index')
+        indexes = [
+            models.Index(fields=['version', 'kind', 'chunk_index']),
+            models.Index(fields=['updated_at']),  # pour between
+        ]
+```
+
+### 2/ Use your store class
+```python
+# timeseries_usage.py
+# insert one
+attrs = {"version": 1, "kind": "type1"}
+MyChunkedStore.set_ts(attrs, my_series)          # first write
+MyChunkedStore.set_ts(attrs, delta_series, update=True)   # update (combine_first)
+MyChunkedStore.set_ts(attrs, delta_series, replace=True)   # replace
+
+# query one
+full   = MyChunkedStore.get_ts(attrs)
+window = MyChunkedStore.get_ts(attrs, start="2025-05-01", end="2025-05-31")
+
+# insert many
+mapping = {
+    (5, "type1"): series1,
+    (5, "type2"): series2,
+}
+MyChunkedStore.set_many_ts(mapping, keys=("version", "kind"))
+
+# yield many
+series_generator = MyChunkedStore.yield_many_ts({"version": 5})  # contains the 2 (serie, key_dict) from mapping
+```
+
+### 3/ Define the ViewSet (server side)
+```python
+# views.py
+from hostore.utils.ts_sync import TimeseriesChunkStoreSyncViewSet
+
+YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(MyChunkedStoreServerSide)
+router.register("ts/myendpoint", YearSync, basename="ts-myendpoint")
+```
+
+
+### 4/ Define the API (client side : pull new data)
+```python
+# my_client_sync_module.py
+from hostore.utils.ts_sync import TimeseriesChunkStoreSyncClient
+
+client = TimeseriesChunkStoreSyncClient(
+    endpoint="https://api.example.com/ts/myendpoint",
+    store_model=MyChunkedStoreClientSide,
+)
+client.pull(batch=100)      # fetch new / updated chunks limiting one batch request to 100 items
+```
+
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

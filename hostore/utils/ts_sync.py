@@ -10,14 +10,18 @@ from typing import Type
 
 class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     """
-    Base ViewSet for server side to synchronize time series data from a TimeseriesChunkStore :
-        - client call updates
-        -
+    Base server-side ViewSet that exposes a REST interface for synchronising
+    any TimeseriesChunkStore subclass.
 
-    Example (view.py) :
+    End-points
+    ──────────
+    • GET  /updates/?since=ISO    → list of modified chunks
+    • POST /pack/                 → export requested chunks
 
-        class YearStoreSyncView(TimeseriesSyncViewSet):
-            store_model = TestStoreChunkYear
+    Usage example in your own views.py:
+
+        class YearStoreSyncView(TimeseriesChunkStoreSyncViewSet):
+            store_model = TestStoreChunkYear     # ← your store
 
         router.register("ts/year", YearStoreSyncView, basename="ts-year")
     """

@@ -103,7 +103,9 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def last_updated_at(cls):
         """
-        Retreive the last updated timestamp from the database.
+        Return the most recent ``updated_at`` timestamp stored in the DB.
+
+        If the table is empty, fall back to 2000-01-01 in the store TZ.
         """
         qs = cls.objects.all()
         if qs.exists():
@@ -116,20 +118,26 @@ class TimeseriesChunkStore(models.Model):
     def set_ts(cls, attrs: dict, serie: pd.Series,
                update=False, replace=False):
         """
-        Set a timeseries.
-        Warning:
-            * if replace=False and update=False, trying to insert over existing attrs will raise a
-          django.db.utils.IntegrityError
-            * All available fields of model must exist in attrs keys
+        Persist a dense time-series in the store.
 
-        Args:
-            attrs: attributes dict
-            serie: timeseries set
-            update: if True, update any existing series in database with provided one (combine_first).
-            replace: if True, replace existing series in database
+        Parameters
+        ----------
+        attrs   : dict
+            Business keys identifying the series (version, kind, …).
+        serie   : pd.Series
+            The data to save.
+        update  : bool, default False
+            If True, merge the new series with the existing one
+            (``combine_first`` logic).
+        replace : bool, default False
+            If True, delete any existing chunks for the same keys
+            before inserting the new series.
 
-        Returns:
-
+        Notes
+        -----
+        * ``update`` and ``replace`` are mutually exclusive.
+        * All model business keys must be present in *attrs*.
+        * Inserting over existing data with both flags at False raises ``IntegrityError``.
         """
         if update and replace:
             raise ValueError('update and replace are mutually exclusive')
@@ -155,15 +163,24 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def get_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None) -> None | pd.Series:
         """
-        Extract timeseries data matching attrs.
-        Warning: all available fields of model must exist in attrs keys
+        Retrieve a time-series matching *attrs*.
 
-        Args:
-            attrs: filters of query
-            start: start index of timeseries
-            end: end index of timeseries
+        attrs   : dict
+            Business keys identifying the series (version, kind, …).
+        start   : dt.datetime
+            Optional, start of time range to retrieve.
+        end   : dt.datetime
+            Optional, end of time range to retrieve.
 
-        Returns: timeseries if exists, None otherwise
+        Notes
+        -----
+        * All model business keys must be present in *attrs*.
+        * Requesting non-existing attrs will return None.
+
+        Returns
+        -------
+        pd.Series | None
+            The reconstructed series, or *None* if no chunk matches.
         """
         cls._ensure_all_attrs_specified(attrs)
         qs = cls.objects.filter(**attrs).order_by('chunk_index')
@@ -188,18 +205,22 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...]):
+
+
         """
-        Set many timeseries at once. User must clear matching filters upstream.
-        Warning:
-            * Trying to insert over existing attrs will raise a django.db.utils.IntegrityError
-            * All available fields of model must exist in attrs keys
+        Bulk insert many timeseries at once.
+
+        Notes
+        -----
+        * All model business keys must be present in *attrs*.
+        * Trying to insert over existing attrs will raise a django.db.utils.IntegrityError (user must clear matching
+        filters upstream)
 
         Args:
             mapping : {(version_value, kind_value,...): serie}
             keys    : ('version','kind',...)
 
         Returns:
-
         """
         rows = []
         for ktuple, serie in mapping.items():
@@ -266,16 +287,15 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def list_updates(cls, since: pd.Timestamp) -> list[dict]:
         """
-        Retourne la liste des chunks modifiés depuis `since`.
+        Return metadata for every chunk whose ``updated_at`` is strictly
+        greater than *since*.
 
-        Chaque élément contient :
-            {
-              "attrs": {<clé métier>: valeur, ...},
-              "chunk_index":  int,
-              "dtype":        str,
-              "start_ts":     ISO-8601,
-              "updated_at":   ISO-8601
-            }
+        Each dict contains:
+            attrs       : full business key dict
+            chunk_index : int
+            dtype       : str
+            start_ts    : ISO-8601 str
+            updated_at  : ISO-8601 str
         """
         qs = (cls.objects
               .filter(updated_at__gt=since)
@@ -296,11 +316,10 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def export_chunks(cls, spec: list[dict]) -> list[tuple]:
         """
-        Reçoit une liste :
-            [{"attrs": {...}, "chunk_index": 12}, ...]
-        Renvoie une liste de tuples :
-            (blob_lz4: bytes, attrs: dict, meta: dict)
-        Le serveur ne décompresse rien.
+        Server-side helper: given *spec* (list of ``{"attrs": ..,
+        "chunk_index": ..}``) return raw LZ4 blobs together with their
+        metadata (blob_lz4: bytes, attrs: dict, meta: dict).
+        No decompression is performed.
         """
         out = []
         for item in spec:
@@ -315,9 +334,8 @@ class TimeseriesChunkStore(models.Model):
     @classmethod
     def import_chunks(cls, payload: list[tuple]):
         """
-        Ingère la liste produite par export_chunks côté client.
-        Chaque tuple : (blob_lz4, attrs, meta)
-        Ajout ou update chunk par chunk.
+        Client-side helper: ingest the list produced by *export_chunks*.
+        Each tuple is ``(blob_lz4, attrs_dict, meta_dict)``.
         """
         for blob, attrs, meta in payload:
             cls._ensure_all_attrs_specified(attrs)
