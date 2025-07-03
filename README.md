@@ -195,7 +195,9 @@ class MyChunkedStore(TimeseriesChunkStore):
             models.Index(fields=['updated_at']),  # should be specified, optimize performances
         ]
 ```
+Following field names cannot be used : 
 
+`start_ts, data, dtype, updated_at, chunk_index`
 
 ### 2/ Use your store class
 ```python

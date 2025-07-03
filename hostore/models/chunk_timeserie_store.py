@@ -8,6 +8,7 @@ from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
+from django.db.models import QuerySet
 from django.db.models.aggregates import Max
 from pytz.exceptions import UnknownTimeZoneError
 from hostore.utils.timeseries import _localise_date
@@ -186,14 +187,13 @@ class TimeseriesChunkStore(models.Model):
             qs = cls._filter_interval(qs, start, end)
 
         pieces = []
-        for row in qs.iterator(chunk_size=cls.ITER_CHUNK_SIZE):
+        for row in qs:
             pieces.append(cls._decompress(row))
 
         if not pieces:
             return None
 
         full = pd.concat(pieces)
-        full.index = pd.to_datetime(full.index, utc=True)
         full = full.tz_convert(cls.STORE_TZ)
 
         if start or end:
@@ -354,6 +354,9 @@ class TimeseriesChunkStore(models.Model):
 
         Returns: transformed serie
         """
+        if serie.empty:
+            return None
+
         if not isinstance(serie.index, pd.DatetimeIndex):
             raise ValueError('Index doit être DatetimeIndex.')
 
@@ -361,7 +364,7 @@ class TimeseriesChunkStore(models.Model):
             return None
 
         if serie.index.tz is None:
-            logger.warning('Saving serie without tz may lead to inconsistent results')
+            logger.warning(f'Saving serie without tz may lead to inconsistent results : localized to STORE_TZ {cls.STORE_TZ}')
             serie = serie.tz_localize(cls.STORE_TZ)
         else:
             serie = serie.tz_convert(cls.STORE_TZ)
@@ -392,7 +395,7 @@ class TimeseriesChunkStore(models.Model):
             yield sub
 
     @classmethod
-    def _chunk_index(cls, ts):
+    def _chunk_index(cls, ts: pd.DatetimeIndex) -> int:
         """ Compute chunk_index value """
         if cls.CHUNK_AXIS == ('year',):
             return ts.year
@@ -400,7 +403,7 @@ class TimeseriesChunkStore(models.Model):
         return ts.year * 12 + ts.month - 1
 
     @classmethod
-    def _build_row(cls, attrs, serie):
+    def _build_row(cls, attrs: dict, serie: pd.Series):
         """
         Build db object row from serie
         serie must be chunked and normalized
@@ -416,22 +419,21 @@ class TimeseriesChunkStore(models.Model):
         )
 
     @classmethod
-    def _update_chunk_with_existing(cls, attrs, serie):
+    def _update_chunk_with_existing(cls, attrs: dict, serie: pd.Series):
         attributes = {**attrs, 'chunk_index': cls._chunk_index(serie.index[0])}
 
         # combine first with existing
-        qs = cls.objects.filter(**attributes)
-        if qs.count() == 0:
-            row = cls._build_row(attrs, serie)
-        elif qs.count() == 1:
-            row = qs.first()
+        try:
+            row = cls.objects.get(**attributes)
             ds_existing = cls._decompress(row)
             # tz_convert UTC : avoid nan insertion at october tz switch
             serie.index = serie.index.tz_convert('UTC')
             ds_existing.index = ds_existing.index.tz_convert('UTC')
             ds_new = serie.combine_first(ds_existing)
             row = cls._build_row(attrs, ds_new)
-        else:
+        except cls.DoesNotExist:
+            row = cls._build_row(attrs, serie)
+        except cls.MultipleObjectsReturned:
             raise ValueError(f'Multiple chunks found for attributes {attributes}')
 
         # dict pour defaults
@@ -447,7 +449,7 @@ class TimeseriesChunkStore(models.Model):
         )
 
     @classmethod
-    def _bulk_upsert(cls, rows):
+    def _bulk_upsert(cls, rows: list):
         if not rows:
             return
 
@@ -458,14 +460,14 @@ class TimeseriesChunkStore(models.Model):
             )
 
     @classmethod
-    def _rebuild_index(cls, row, length):
+    def _rebuild_index(cls, row, length: int):
         start = row.start_ts.astimezone(ZoneInfo(cls.STORE_TZ))
         return pd.date_range(start=start,
                              periods=length,
                              freq=cls.STORE_FREQ)
 
     @classmethod
-    def _filter_interval(cls, qs, start, end):
+    def _filter_interval(cls, qs: QuerySet, start: pd.Timestamp, end: pd.Timestamp):
         if isinstance(start, str):
             start = pd.Timestamp(start, tz=cls.STORE_TZ)
         else:
@@ -482,7 +484,7 @@ class TimeseriesChunkStore(models.Model):
         return qs
 
     @classmethod
-    def _ensure_all_attrs_specified(cls, attrs):
+    def _ensure_all_attrs_specified(cls, attrs: dict):
         """
         Vérifie que l'utilisateur a renseigné tous les attributs "métiers"
         """
