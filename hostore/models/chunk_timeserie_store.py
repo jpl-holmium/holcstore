@@ -157,7 +157,7 @@ class TimeseriesChunkStore(models.Model):
                 rows.append(cls._build_row(attrs, sub))
 
         if not update:
-            cls._bulk_upsert(rows)
+            cls._bulk_create(rows)
 
     @classmethod
     def get_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None) -> None | pd.Series:
@@ -194,12 +194,7 @@ class TimeseriesChunkStore(models.Model):
             return None
 
         full = pd.concat(pieces)
-        full = full.tz_convert(cls.STORE_TZ)
-
-        if start or end:
-            full = full.loc[start:end]
-
-        return full
+        return cls._slice_serie(full, start, end)
 
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...]):
@@ -229,7 +224,7 @@ class TimeseriesChunkStore(models.Model):
                 continue
             for sub in cls._chunk(serie):
                 rows.append(cls._build_row(attrs, sub))
-        cls._bulk_upsert(rows)
+        cls._bulk_create(rows)
 
     @classmethod
     def yield_many_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None):
@@ -259,8 +254,7 @@ class TimeseriesChunkStore(models.Model):
             if not buffer:
                 return
             serie = pd.concat(buffer)
-            if start or end:
-                serie = serie.loc[start:end]
+            serie = cls._slice_serie(serie, start, end)
             key_dict = dict(zip(cls.get_model_keys(), current_values))
             yield serie, key_dict
             buffer.clear()
@@ -449,7 +443,7 @@ class TimeseriesChunkStore(models.Model):
         )
 
     @classmethod
-    def _bulk_upsert(cls, rows: list):
+    def _bulk_create(cls, rows: list):
         if not rows:
             return
 
@@ -493,6 +487,15 @@ class TimeseriesChunkStore(models.Model):
         if model_keys != attrs_keys:
             raise ValueError(f'Trying to set or get partial attributes {attrs} while full attributes list is {model_keys}')
 
+    @classmethod
+    def _slice_serie(cls, serie, start, end):
+        if start and end:
+            serie = serie.loc[start:end]
+        elif start:
+            serie = serie.loc[start:]
+        elif end:
+            serie = serie.loc[:end]
+        return serie
 
 # class ExampleTimeseriesChunkStoreWithAttributes(TimeseriesChunkStore):
 #     # Clé fonctionnelle définie par l’utilisateur
