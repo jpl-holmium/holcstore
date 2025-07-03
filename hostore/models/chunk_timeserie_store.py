@@ -42,8 +42,6 @@ class TimeseriesChunkStore(models.Model):
     _model_keys = None
 
     class Meta:
-        # les classes héritant de TimeseriesChunkStore doivent rajouter ['chunk_index'] au unique together
-        # todo classe enfant indexation par updated_at chunk_index et clef métier
         unique_together = ['chunk_index']
         abstract = True
 
@@ -294,8 +292,8 @@ class TimeseriesChunkStore(models.Model):
             attrs       : full business key dict
             chunk_index : int
             dtype       : str
-            start_ts    : ISO-8601 str
-            updated_at  : ISO-8601 str
+            start_ts    : dt.datetime
+            updated_at  : dt.datetime
         """
         qs = (cls.objects
               .filter(updated_at__gt=since)
@@ -308,8 +306,8 @@ class TimeseriesChunkStore(models.Model):
                 "attrs": {k: row[k] for k in cls.get_model_keys()},
                 "chunk_index": row["chunk_index"],
                 "dtype": row["dtype"],
-                "start_ts": row["start_ts"].isoformat(),
-                "updated_at": row["updated_at"].isoformat(),
+                "start_ts": row["start_ts"],
+                "updated_at": row["updated_at"],
             })
         return out
 

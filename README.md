@@ -177,39 +177,54 @@ Quick start
 ```python
 # models.py
 class MyChunkedStore(TimeseriesChunkStore):
+    # Custom fields
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
 
+    # Store settings
+    CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
+    STORE_TZ   = 'Europe/Paris' # Chunking timezone (also timeseries output tz)
+    STORE_FREQ   = '1h' # Timeseries storage frequency. (the store reindex input series but never resample)
+    ITER_CHUNK_SIZE = 200 # Queryset iteration batch size
+    BULK_CREATE_BATCH_SIZE = 200 # Bulk create batch size
+    
     class Meta(TimeseriesChunkStore.Meta):
-        unique_together = ('version', 'kind', 'chunk_index')
+        unique_together = ('version', 'kind', 'chunk_index')  # should be (*your_fields, 'chunk_index')
         indexes = [
-            models.Index(fields=['version', 'kind', 'chunk_index']),
-            models.Index(fields=['updated_at']),  # pour between
+            models.Index(fields=['version', 'kind', 'chunk_index']), # should be models.Index(fields=[*your_fields, 'chunk_index']),
+            models.Index(fields=['updated_at']),  # should be specified, optimize performances
         ]
 ```
+
 
 ### 2/ Use your store class
 ```python
 # timeseries_usage.py
-# insert one
+# Set one
 attrs = {"version": 1, "kind": "type1"}
 MyChunkedStore.set_ts(attrs, my_series)          # first write
 MyChunkedStore.set_ts(attrs, delta_series, update=True)   # update (combine_first)
 MyChunkedStore.set_ts(attrs, delta_series, replace=True)   # replace
+MyChunkedStore.set_ts(attrs, delta_series)   # FAIL (attrs exists)
 
-# query one
+# Get one
 full   = MyChunkedStore.get_ts(attrs)
 window = MyChunkedStore.get_ts(attrs, start="2025-05-01", end="2025-05-31")
+fail   = MyChunkedStore.get_ts({"version": 1})  # FAIL : must specify all attrs
+none   = MyChunkedStore.get_ts({"version": 1, "kind": "nonexisting"})  # returns None : does not exists
 
-# insert many
+# Set many
 mapping = {
     (5, "type1"): series1,
     (5, "type2"): series2,
 }
 MyChunkedStore.set_many_ts(mapping, keys=("version", "kind"))
 
-# yield many
+# Yield many
 series_generator = MyChunkedStore.yield_many_ts({"version": 5})  # contains the 2 (serie, key_dict) from mapping
+
+# CANNOT set many over existing
+MyChunkedStore.set_many_ts(mapping, keys=("version", "kind")) # FAIL : at least one value from mapping already exists
 ```
 
 ### 3/ Define the ViewSet (server side)
@@ -217,7 +232,7 @@ series_generator = MyChunkedStore.yield_many_ts({"version": 5})  # contains the 
 # views.py
 from hostore.utils.ts_sync import TimeseriesChunkStoreSyncViewSet
 
-YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(MyChunkedStoreServerSide)
+YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(MyChunkedStoreServerSide, throttle_classes=[])  # pass ViewSet kwargs
 router.register("ts/myendpoint", YearSync, basename="ts-myendpoint")
 ```
 

@@ -50,15 +50,25 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
         return Response(payload)
 
     @classmethod
-    def as_factory(cls, model):
+    def as_factory(cls, model, **extra_attrs):
         """
-        Retourne dynamiquement un ViewSet déjà relié à `model`.
-        Exemple:
-            RemoteSync = TimeseriesChunkStoreSyncViewSet.as_factory(RemoteStore)
+        Dynamically create a ViewSet bound to *model* and
+        enriched with optional DRF attributes.
+
+        Example
+        -------
+        YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(
+            TestStoreChunkYear,
+            permission_classes=[IsAuthenticatedActive],
+            parser_classes=[JSONParser],
+            throttle_classes=[],               # disable throttling
+        )
+        router.register("ts/year", YearSync, basename="ts-year")
         """
         if not hasattr(model, "list_updates"):
             raise TypeError("model must inherit TimeseriesChunkStore")
-        return type(f"{model.__name__}SyncViewSet", (cls,), {"store_model": model})
+        attrs = {"store_model": model, **extra_attrs}
+        return type(f"{model.__name__}SyncViewSet", (cls,), attrs)
 
 
 class TimeseriesChunkStoreSyncClient:
