@@ -32,7 +32,11 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     def updates(self, request):
         since = pd.Timestamp(request.query_params["since"])
-        data  = self.store_model.list_updates(since)
+        filters = {
+            k: v for k, v in request.query_params.items()
+            if k != "since"
+        }
+        data  = self.store_model.list_updates(since, filters)
         return Response(data)
 
     # 2) /pack/   POST → export
@@ -84,11 +88,14 @@ class TimeseriesChunkStoreSyncClient:
         self.store_model    = store_model
 
     # ----------- pull depuis le serveur -------------------------------
-    def pull(self, batch=50):
+    def pull(self, batch=50, filters: dict = None):
+        if filters is None:
+            filters = dict()
+
         since = self.store_model.last_updated_at()
         updates = requests.get(
             f"{self.endpoint}/updates/",
-            params={"since": since.isoformat()}
+            params={"since": since.isoformat(), **filters}
         ).json()
 
         for i in range(0, len(updates), batch):

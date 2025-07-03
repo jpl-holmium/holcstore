@@ -100,13 +100,20 @@ class TimeseriesChunkStore(models.Model):
     # ------------------------------------------------------------------
 
     @classmethod
-    def last_updated_at(cls):
+    def last_updated_at(cls, filters: dict = None) -> pd.Timestamp:
         """
         Return the most recent ``updated_at`` timestamp stored in the DB.
-
         If the table is empty, fall back to 2000-01-01 in the store TZ.
+
+        Parameters
+        ----------
+        filters   : dict
+            Filter the data for the update lookup
         """
-        qs = cls.objects.all()
+        if filters is None:
+            filters = dict()
+
+        qs = cls.objects.filter(**filters)
         if qs.exists():
             # return qs.aggregate(last=Max("updated_at"))["last"]
             return qs.order_by('-updated_at').first().updated_at
@@ -277,7 +284,7 @@ class TimeseriesChunkStore(models.Model):
     # ------------------------------------------------------------------
 
     @classmethod
-    def list_updates(cls, since: pd.Timestamp) -> list[dict]:
+    def list_updates(cls, since: pd.Timestamp, filters: dict = None) -> list[dict]:
         """
         Return metadata for every chunk whose ``updated_at`` is strictly
         greater than *since*.
@@ -289,8 +296,10 @@ class TimeseriesChunkStore(models.Model):
             start_ts    : dt.datetime
             updated_at  : dt.datetime
         """
+        if filters is None:
+            filters = dict()
         qs = (cls.objects
-              .filter(updated_at__gt=since)
+              .filter(**filters, updated_at__gt=since)
               .values(*cls.get_model_keys(),
                       "chunk_index", "dtype",
                       "start_ts", "updated_at"))

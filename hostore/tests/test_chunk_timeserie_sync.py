@@ -72,7 +72,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
         self.req_client.base_url = "http://testserver/"
         # self.client = APIClient()
 
-    def _sync(self):
+    def _sync(self, filters=None):
 
         # # METHODE AVEC APICLIENT client → /updates
         # since = LocalYearStore.last_updated_at()
@@ -91,7 +91,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
             patch.object(requests, "post", self.req_client.post),
             patch.object(requests, "put",  self.req_client.put),
         ):
-            self.store_client.pull(batch=20)
+            self.store_client.pull(batch=20, filters=filters)
 
     # --------------------------------------------------------------
     def test_full_sync_and_update(self):
@@ -125,14 +125,23 @@ class SyncIntegrationTestCase(TransactionTestCase):
         for attr, serie in series2:
             RemoteYearStore.set_ts(attr, serie, update=True)
 
-        self._sync()
+        # sync kind B : no changes
+        self._sync(filters={"kind": "B"})
 
+        # vérif intégrité 1 bis
+        for attr, serie in series:
+            got = LocalYearStore.get_ts(attr)
+            got = got[got.notnull()]
+            assert_series_equal(got, serie)
+
+        # sync all
+        self._sync(filters={"kind": "A"})
+        # vérif intégrité 2
         series_verif = [
             ({"version": 1, "kind": "A"}, sere_a1_v2.combine_first(sere_a1_v1)),
             ({"version": 2, "kind": "A"}, sere_a2_v2.combine_first(sere_a2_v1)),
             series[2], series[3],
         ]
-        # vérif intégrité 2
         for attr, serie in series_verif:
             got = LocalYearStore.get_ts(attr)
             got = got[got.notnull()]
