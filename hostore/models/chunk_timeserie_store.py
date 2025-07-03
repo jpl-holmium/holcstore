@@ -434,9 +434,6 @@ class TimeseriesChunkStore(models.Model):
         try:
             row = cls.objects.get(**attributes)
             ds_existing = cls._decompress(row)
-            # tz_convert UTC : avoid nan insertion at october tz switch
-            serie.index = serie.index.tz_convert('UTC')
-            ds_existing.index = ds_existing.index.tz_convert('UTC')
             ds_new = serie.combine_first(ds_existing)
             row = cls._build_row(attrs, ds_new)
         except cls.DoesNotExist:
@@ -469,10 +466,12 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _rebuild_index(cls, row, length: int):
-        start = row.start_ts.astimezone(ZoneInfo(cls.STORE_TZ))
-        return pd.date_range(start=start,
-                             periods=length,
-                             freq=cls.STORE_FREQ)
+        return pd.date_range(
+            start=pd.Timestamp(row.start_ts).tz_convert(cls.STORE_TZ),
+            periods=length,
+            freq=cls.STORE_FREQ,
+            tz=cls.STORE_TZ,
+        )
 
     @classmethod
     def _filter_interval(cls, qs: QuerySet, start: pd.Timestamp, end: pd.Timestamp):
