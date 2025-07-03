@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
-# TODO automatiser la génération de ces clef ? source d'erreur possible
 KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'chunk_index'}
 
 class TimeseriesChunkStore(models.Model):
@@ -162,6 +161,9 @@ class TimeseriesChunkStore(models.Model):
                 cls._update_chunk_with_existing(attrs, sub)
             else:
                 rows.append(cls._build_row(attrs, sub))
+                if len(rows) >= cls.BULK_CREATE_BATCH_SIZE:
+                    cls._bulk_create(rows)
+                    rows = []
 
         if not update:
             cls._bulk_create(rows)
@@ -231,6 +233,9 @@ class TimeseriesChunkStore(models.Model):
                 continue
             for sub in cls._chunk(serie):
                 rows.append(cls._build_row(attrs, sub))
+                if len(rows) >= cls.BULK_CREATE_BATCH_SIZE:
+                    cls._bulk_create(rows)
+                    rows = []
         cls._bulk_create(rows)
 
     @classmethod
