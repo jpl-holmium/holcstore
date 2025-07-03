@@ -12,6 +12,7 @@ import numpy as np
 import lz4.frame
 
 from hostore.models import TimeseriesChunkStore
+from hostore.tests.test_chunk_timeserie_store import assert_series_equal
 from hostore.utils.ts_sync import TimeseriesChunkStoreSyncViewSet, TimeseriesChunkStoreSyncClient
 
 
@@ -112,7 +113,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
         for attr, serie in series:
             got = LocalYearStore.get_ts(attr)
             got = got[got.notnull()]
-            pd.testing.assert_series_equal(got, serie)
+            assert_series_equal(got, serie)
 
         # update server
         sere_a1_v2 = self._make_series("2025-02-01", 24 * 31 * 4)
@@ -135,7 +136,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
         for attr, serie in series_verif:
             got = LocalYearStore.get_ts(attr)
             got = got[got.notnull()]
-            pd.testing.assert_series_equal(got, serie)
+            assert_series_equal(got, serie)
 
     # --------------------------------------------------------------
     @staticmethod
