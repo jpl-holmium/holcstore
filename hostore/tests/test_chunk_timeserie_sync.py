@@ -27,7 +27,6 @@ class RemoteYearStore(TimeseriesChunkStore):
     class Meta(TimeseriesChunkStore.Meta):
         app_label   = "ts_remote"
         db_table    = "ts_remote_year"
-        unique_together = ('version', 'kind', 'chunk_index')
 
 
 class LocalYearStore(TimeseriesChunkStore):
@@ -38,7 +37,6 @@ class LocalYearStore(TimeseriesChunkStore):
     class Meta(TimeseriesChunkStore.Meta):
         app_label   = "ts_local"
         db_table    = "ts_local_year"
-        unique_together = ('version', 'kind', 'chunk_index')
 
 
 # ------------------------------------------------------------------
