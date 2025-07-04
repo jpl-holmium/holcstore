@@ -1,7 +1,7 @@
 import datetime as dt
 import logging
+from hashlib import blake2b
 from typing import Union, List
-from zoneinfo import ZoneInfo
 
 import pytz
 from django.db import models, transaction
@@ -9,7 +9,8 @@ import lz4.frame as lz4
 import numpy as np
 import pandas as pd
 from django.db.models import QuerySet
-from django.db.models.aggregates import Max
+from django.db.models.signals import class_prepared
+from django.dispatch import receiver
 from pytz.exceptions import UnknownTimeZoneError
 from hostore.utils.timeseries import _localise_date
 
@@ -510,18 +511,50 @@ class TimeseriesChunkStore(models.Model):
             serie = serie.loc[:end]
         return serie
 
-# class ExampleTimeseriesChunkStoreWithAttributes(TimeseriesChunkStore):
-#     # Clé fonctionnelle définie par l’utilisateur
-#     version = models.IntegerField()
-#     kind    = models.CharField(max_length=100)
-#
-#     class Meta:
-#         abstract = False
-#         unique_together = (
-#             'version', 'kind', 'chunk_year', 'chunk_month'
-#         )
-#         indexes = [
-#             models.Index(fields=['version', 'kind']),
-#             models.Index(fields=['chunk_year', 'chunk_month']),
-#             models.Index(fields=['start_ts']),  # pour between
-#         ]
+@receiver(class_prepared)
+def _auto_meta_for_chunk_store(sender, **kwargs):
+    """
+    Enrichit automatiquement les sous-classes de TimeseriesChunkStore :
+      • ajoute unique_together = (*business_keys, 'chunk_index')
+      • ajoute un index composite (*business_keys, 'chunk_index')
+      • ajoute un index sur updated_at
+    """
+    # Ne rien faire pour la classe abstraite ou pour des modèles sans champ métier
+    if not issubclass(sender, TimeseriesChunkStore) or sender is TimeseriesChunkStore:
+        return
+
+    business_keys = tuple(sorted(sender.get_model_keys()))
+    if not business_keys:
+        business_keys = ()
+
+    # # # ---------- unique_together ------------------------------------
+    sender._meta.unique_together = (tuple([*business_keys, "chunk_index"]), )
+
+    # ---------- indexes --------------------------------------------
+    def _has_index(fields):
+        """True si un index existant porte exactement ces champs (ordre indifférent)."""
+        fld = set(fields)
+        return any(set(idx.fields) == fld for idx in sender._meta.indexes)
+
+    # !! already added from unique_together contraint !!
+    # composite_fields = (*business_keys, 'chunk_index')
+    # if not _has_index(composite_fields):
+    #     sender._meta.indexes.append(models.Index(fields=list(composite_fields)))
+
+    if not _has_index(('updated_at',)):
+        sender._meta.indexes.append(
+            models.Index(
+                fields=['updated_at'],
+                name=_idx_name(sender, 'upd')  # set a name for testing purposes
+            )
+        )
+
+def _idx_name(model, suffix: str) -> str:
+    """
+    Construit un nom d’index unique <= 30 car. : <table>_<suffix>_<hash4>
+    """
+    base  = f"{model._meta.db_table}_{suffix}"
+    if len(base) > 30:
+        short = blake2b(base.encode(), digest_size=15).hexdigest()  # 4 car.
+        base = short[:30]
+    return base

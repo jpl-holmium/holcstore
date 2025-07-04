@@ -187,17 +187,12 @@ class MyChunkedStore(TimeseriesChunkStore):
     STORE_FREQ   = '1h' # Timeseries storage frequency. (the store reindex input series but never resample)
     ITER_CHUNK_SIZE = 200 # Queryset iteration batch size
     BULK_CREATE_BATCH_SIZE = 200 # Bulk create batch size
-    
-    class Meta(TimeseriesChunkStore.Meta):
-        unique_together = ('version', 'kind', 'chunk_index')  # should be (*your_fields, 'chunk_index')
-        indexes = [
-            models.Index(fields=['version', 'kind', 'chunk_index']), # should be models.Index(fields=[*your_fields, 'chunk_index']),
-            models.Index(fields=['updated_at']),  # should be specified, optimize performances
-        ]
 ```
 Following field names cannot be used : 
 
 `start_ts, data, dtype, updated_at, chunk_index`
+
+Meta class attributes will be automatically set according to the fields set by the user.
 
 ### 2/ Use your store class
 ```python

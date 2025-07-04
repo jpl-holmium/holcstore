@@ -16,8 +16,6 @@ class TestStoreChunkYearMonth(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed = True
-        unique_together = ("version", "kind", "chunk_index")
-
 
 class TestStoreChunkYearMonthUTC(TimeseriesChunkStore):
     version = models.IntegerField()
@@ -28,7 +26,6 @@ class TestStoreChunkYearMonthUTC(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed = True
-        unique_together = ("version", "kind", "chunk_index")
 
 class TestStoreChunkYear(TimeseriesChunkStore):
     version = models.IntegerField()
@@ -38,7 +35,6 @@ class TestStoreChunkYear(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed = True
-        unique_together = ("version", "kind", "chunk_index",)
 
 
 # ---------------------------------------------------------------------------
