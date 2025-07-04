@@ -177,7 +177,7 @@ Quick start
 ```python
 # models.py
 class MyChunkedStore(TimeseriesChunkStore):
-    # Custom fields
+    # Custom fields (can be seen as "axis keys")
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
 
@@ -188,11 +188,13 @@ class MyChunkedStore(TimeseriesChunkStore):
     ITER_CHUNK_SIZE = 200 # Queryset iteration batch size
     BULK_CREATE_BATCH_SIZE = 200 # Bulk create batch size
 ```
-Following field names cannot be used : 
+The Custom fields are **strictly indexation axis**. 
 
+You **must not** use them to store metadata or redundant data : these keys will be used to build Meta class unique_together and indexes. When you request a timeserie, all custom fields must be specified.
+
+Following field names cannot be used : 
 `start_ts, data, dtype, updated_at, chunk_index`
 
-Meta class attributes will be automatically set according to the fields set by the user.
 
 ### 2/ Use your store class
 ```python

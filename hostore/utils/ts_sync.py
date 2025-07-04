@@ -37,10 +37,10 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
             if k != "since"
         }
         data  = self.store_model.list_updates(since, filters)
-        return Response(data)
+        return Response(data, content_type="application/json")
 
     # 2) /pack/   POST → export
-    @action(detail=False, methods=["post"])
+    @action(detail=False, methods=["get"])
     def pack(self, request):
         spec    = request.data
         chunks  = self.store_model.export_chunks(spec)
@@ -51,7 +51,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
                 "meta":  meta,
             } for b, attrs, meta in chunks
         ]
-        return Response(payload)
+        return Response(payload, content_type="application/json")
 
     @classmethod
     def as_factory(cls, model, **extra_attrs):
@@ -100,7 +100,7 @@ class TimeseriesChunkStoreSyncClient:
 
         for i in range(0, len(updates), batch):
             spec = updates[i:i+batch]
-            pack = requests.post(f"{self.endpoint}/pack/", json=spec).json()
+            pack = requests.get(f"{self.endpoint}/pack/", json=spec).json()
             tuples = [
                 (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
                 for item in pack

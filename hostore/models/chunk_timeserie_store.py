@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+from functools import lru_cache
 from hashlib import blake2b
 from typing import Union, List
 
@@ -368,10 +369,11 @@ class TimeseriesChunkStore(models.Model):
 
         if not isinstance(serie.index, pd.DatetimeIndex):
             raise ValueError('Index doit être DatetimeIndex.')
-
-        if serie.isnull().all():
+        nulls = serie.isnull()
+        if nulls.all():
             return None
-
+        # avoid to save null parts in db
+        serie = serie[~nulls]
         if serie.index.tz is None:
             logger.warning(f'Saving serie without tz may lead to inconsistent results : localized to STORE_TZ {cls.STORE_TZ}')
             serie = serie.tz_localize(cls.STORE_TZ)
@@ -396,12 +398,12 @@ class TimeseriesChunkStore(models.Model):
     def _chunk(cls, serie: pd.Series):
         if not cls.CHUNK_AXIS:
             yield serie
-            return
-        grouper = serie.groupby([
-            getattr(serie.index, ax) for ax in cls.CHUNK_AXIS
-        ])
-        for _, sub in grouper:
-            yield sub
+        else:
+            grouper = serie.groupby([
+                getattr(serie.index, ax) for ax in cls.CHUNK_AXIS
+            ])
+            for _, sub in grouper:
+                yield sub
 
     @classmethod
     def _chunk_index(cls, ts: pd.DatetimeIndex) -> int:
@@ -467,8 +469,13 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def _rebuild_index(cls, row, length: int):
+        return cls._cached_index(row.start_ts, length)
+
+    @classmethod
+    @lru_cache(maxsize=12*10)
+    def _cached_index(cls, start_ts, length):
         return pd.date_range(
-            start=pd.Timestamp(row.start_ts).tz_convert(cls.STORE_TZ),
+            start=pd.Timestamp(start_ts).tz_convert(cls.STORE_TZ),
             periods=length,
             freq=cls.STORE_FREQ,
             tz=cls.STORE_TZ,
