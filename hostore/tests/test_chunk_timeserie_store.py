@@ -37,6 +37,14 @@ class TestStoreChunkYear(TimeseriesChunkStore):
         managed = True
 
 
+class TestStoreChunkYearMonthNoAttrs(TimeseriesChunkStore):
+    CHUNK_AXIS = ('year', 'month')
+
+    class Meta:
+        app_label = "ts_inline"
+        managed = True
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -67,6 +75,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     year_count_expected = None
     series_na = None
     drop_series_na = False
+    no_user_fields = False  # special case with table without any attributes
     input_tz = 'Europe/Paris'
 
     # -------------------------------------------------------------------
@@ -104,6 +113,13 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
             ds.dropna(inplace=True)
         return ds
 
+    @classmethod
+    def make_attrs(cls, orig_attrs):
+        if cls.no_user_fields:
+            return {}
+        else:
+            return orig_attrs
+
     # -------------------------------------------------------------------
     # Scénarios
     # -------------------------------------------------------------------
@@ -111,18 +127,19 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     def test_set_and_get(self):
         # serie_a only
         serie_a = self.make_series("2020-01-01", 24 * 365)
-        attrs = {"version": 1, "kind": "A"}
+        attrs = self.make_attrs({"version": 1, "kind": "A"})
         self.test_table.set_ts(attrs, serie_a)
         got = self.test_table.get_ts(attrs)
         assert_series_equal(got, serie_a)
         self.assertGreaterEqual(self.test_table.objects.filter(**attrs).count(), self.year_count_expected)
 
         # serie_a + serie_b
-        serie_b = self.make_series("2020-01-01", 24 * 365)
-        attrs = {"version": 1, "kind": "B"}
-        self.test_table.set_ts(attrs, serie_b)
-        got = self.test_table.get_ts(attrs)
-        assert_series_equal(got, serie_b)
+        if not self.no_user_fields:
+            serie_b = self.make_series("2020-01-01", 24 * 365)
+            attrs = self.make_attrs({"version": 1, "kind": "B"})
+            self.test_table.set_ts(attrs, serie_b)
+            got = self.test_table.get_ts(attrs)
+            assert_series_equal(got, serie_b)
 
         # try re set other
         serie_c = self.make_series("2020-01-01", 24 * 365)
@@ -130,14 +147,17 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
             self.test_table.set_ts(attrs, serie_c)
 
         # nonexistent
-        got = self.test_table.get_ts({"version": 1, "kind": "nonexistent"})
-        self.assertEqual(got, None)
+        if not self.no_user_fields:
+            got = self.test_table.get_ts({"version": 1, "kind": "nonexistent"})
+            self.assertEqual(got, None)
 
     def test_set_and_get_underconstrained(self):
         # "under constrained" request - secured by _ensure_all_attrs_specified
+        if self.no_user_fields:
+            return
 
         serie_a = self.make_series("2020-01-01", 24 * 365)
-        attrs = {"version": 1}
+        attrs = self.make_attrs({"version": 1})
         with self.assertRaises(ValueError):
             self.test_table.set_ts(attrs, serie_a)
 
@@ -146,14 +166,14 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
 
     def test_set_and_get_full_nan(self):
         serie = self.make_series("2020-01-01", 24 * 365, full_nan=True)
-        attrs = {"version": 1, "kind": "Anan"}
+        attrs = self.make_attrs({"version": 1, "kind": "Anan"})
         self.test_table.set_ts(attrs, serie)
         got = self.test_table.get_ts(attrs)
         self.assertEqual(got, None)
 
     def test_range_filter(self):
         serie = self.make_series("2019-01-01", 24 * 365)
-        attrs = {"version": 3, "kind": "C"}
+        attrs = self.make_attrs({"version": 3, "kind": "C"})
         self.test_table.set_ts(attrs, serie)
         start, end = _localise_date_interval(dt.date(2019, 6, 1), dt.date(2019, 6, 2))
         sub = self.test_table.get_ts(attrs, start=start, end=end)
@@ -182,13 +202,14 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         s3 : replace s2
         """
         # other serie
-        attrs = {"version": 4, "kind": "D"}
+        attrs = self.make_attrs({"version": 4, "kind": "D"})
         attrs_ot = {"version": 4, "kind": "other"}
         s4 = self.make_series("2022-06-01", 380*24, seed=42)
 
         # other
-        self.test_table.set_ts(attrs_ot, s4)
-        assert_series_equal(self.test_table.get_ts(attrs_ot), s4)
+        if not self.no_user_fields:
+            self.test_table.set_ts(attrs_ot, s4)
+            assert_series_equal(self.test_table.get_ts(attrs_ot), s4)
 
         self.test_table.set_ts(attrs, s1)
         assert_series_equal(self.test_table.get_ts(attrs), s1)
@@ -200,7 +221,8 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         assert_series_equal(self.test_table.get_ts(attrs), s3)
 
         # other
-        assert_series_equal(self.test_table.get_ts(attrs_ot), s4)
+        if not self.no_user_fields:
+            assert_series_equal(self.test_table.get_ts(attrs_ot), s4)
 
     def test_update_and_replace_simple(self):
         """
@@ -211,7 +233,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         s3 = self.make_series("2022-06-01", 381*24, seed=43)
         s4 = self.make_series("2022-06-01", 420*24, seed=44)
         s5 = self.make_series("2026-06-01", 365*24, seed=44)
-        attrs = {"version": 4, "kind": "D2"}
+        attrs = self.make_attrs({"version": 4, "kind": "D2"})
 
         self.test_table.set_ts(attrs, s1)
         self.test_table.set_ts(attrs, s2, update=True)
@@ -224,6 +246,8 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s5, s4, s3, s2, s1]))
 
     def test_set_many_ts(self):
+        if self.no_user_fields:
+            return
         mapping = {
             (5, "E"): self.make_series("2023-01-01", 24),
             (5, "F"): self.make_series("2023-02-01", 24 * 2),
@@ -236,6 +260,9 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         with self.assertRaises(IntegrityError):
             self.test_table.set_many_ts(mapping, keys=("version", "kind"))
     def test_yield_ts(self):
+        if self.no_user_fields:
+            return
+
         mapping = {
             (6, "G"): self.make_series("2024-01-01", 24*390),
             (6, "H"): self.make_series("2024-01-01", 24*390),
@@ -276,6 +303,15 @@ class TestTimeseries_2ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
     __unittest_skip__ = False
     test_table = TestStoreChunkYearMonth
     year_count_expected = 12
+
+class TestTimeseries_2Chunk_NoAttrs_TestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year Month
+    """
+    __unittest_skip__ = False
+    test_table = TestStoreChunkYearMonthNoAttrs
+    year_count_expected = 12
+    no_user_fields = True
 
 class TestTimeseries_2ChunkUTCTestCase(BaseTimeseriesChunkStoreTestCase):
     """
