@@ -1,3 +1,6 @@
+### v0.5.0 - 2025-07-04
+- Added TimeseriesChunkStore : store efficiently dense timeseries, with automatic chunking and compression. Easy client-server syncronisation through a dedicated client class and viewset.
+
 ### v0.4.1 - 2024-09-16
 - Correct file extension for Pypi description
 

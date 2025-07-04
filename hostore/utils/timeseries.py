@@ -3,6 +3,8 @@ import logging
 import pandas as pd
 from typing import Union, List, Tuple
 
+import pytz
+
 logger = logging.getLogger(__name__)
 
 
@@ -268,3 +270,17 @@ def slice_ts(ds: Union[pd.Series, pd.DataFrame], start: dt.datetime, end: dt.dat
     pos = ((ds.index >= start) &
            (ds.index < end))
     return ds.loc[pos]
+
+
+TZ_PARIS = 'Europe/Paris'
+
+def _localise_date(pydate, time=dt.time(), timezone_name=TZ_PARIS):
+    if timezone_name is None:
+        return dt.datetime.combine(pydate, time)
+    else:
+        return pytz.timezone(timezone_name).localize(dt.datetime.combine(pydate, time))
+
+
+def _localise_date_interval(date_start, date_end, timezone_name=TZ_PARIS):
+    return (_localise_date(date_start, timezone_name=timezone_name),
+            _localise_date(date_end, time=dt.time.max, timezone_name=timezone_name))
