@@ -1,5 +1,7 @@
 # ts_sync/views.py
+import backoff
 import requests
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -83,26 +85,55 @@ class TimeseriesChunkStoreSyncClient:
     client.pull(since) : récupère les nouveautés
     """
 
-    def __init__(self, *, endpoint: str, store_model: Type['TimeseriesChunkStore']):
+    def __init__(self, *,
+                 endpoint: str,
+                 store_model: Type['TimeseriesChunkStore'],
+                 retry_max_tries: int = 5,
+                 retry_max_time: int = 300,
+                 ):
+        """
+        Construct the synchronization client for store_model.
+
+        Args:
+            endpoint: url to call /updates/ and /pack/
+            store_model: client TimeseriesChunkStore model to insert updates
+            retry_max_tries: number of retry attemps
+            retry_max_time: retry time in seconds
+        """
         self.endpoint = endpoint.rstrip("/")
         self.store_model    = store_model
+        self._retry_tries = retry_max_tries
+        self._retry_time  = retry_max_time
 
     # ----------- pull depuis le serveur -------------------------------
-    def pull(self, batch=50, filters: dict = None):
-        if filters is None:
-            filters = dict()
+    def pull(self, batch: int = 50, filters: dict | None = None):
+        filters = filters or {}
 
         since = self.store_model.last_updated_at()
-        updates = requests.get(
-            f"{self.endpoint}/updates/",
-            params={"since": since.isoformat(), **filters}
-        ).json()
+        params = {"since": since.isoformat(), **filters}
+
+        updates = self._get(f"{self.endpoint}/updates/", params=params)
 
         for i in range(0, len(updates), batch):
-            spec = updates[i:i+batch]
-            pack = requests.get(f"{self.endpoint}/pack/", json=spec).json()
+            spec  = updates[i : i + batch]
+            pack  = self._get(f"{self.endpoint}/pack/", json=spec)
             tuples = [
                 (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
                 for item in pack
             ]
             self.store_model.import_chunks(tuples)
+
+    # ----------- requête HTTP avec back-off paramétrable --------------
+    def _get(self, url: str, **kwargs):
+        @backoff.on_exception(
+            backoff.expo,
+            requests.exceptions.RequestException,
+            max_tries=self._retry_tries,
+            max_time=self._retry_time,
+        )
+        def _call():
+            resp = requests.get(url, **kwargs)
+            resp.raise_for_status()
+            return resp.json()
+
+        return _call()
