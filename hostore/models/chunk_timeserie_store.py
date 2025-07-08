@@ -39,8 +39,7 @@ class TimeseriesChunkStore(models.Model):
     CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
     STORE_TZ   = 'Europe/Paris' # Chunking timezone
     STORE_FREQ   = '1h' # Timeseries storage frequency.
-    ITER_CHUNK_SIZE = 200
-    BULK_CREATE_BATCH_SIZE = 200
+
     _model_keys = None
 
     class Meta:
@@ -123,7 +122,7 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,
-               update=False, replace=False):
+               update=False, replace=False, bulk_create_batch_size=200):
         """
         Persist a dense time-series in the store.
 
@@ -139,7 +138,7 @@ class TimeseriesChunkStore(models.Model):
         replace : bool, default False
             If True, delete any existing chunks for the same keys
             before inserting the new series.
-
+        bulk_create_batch_size : bulk batch size for bulk insertion
         Notes
         -----
         * ``update`` and ``replace`` are mutually exclusive.
@@ -163,12 +162,12 @@ class TimeseriesChunkStore(models.Model):
                 cls._update_chunk_with_existing(attrs, sub)
             else:
                 rows.append(cls._build_row(attrs, sub))
-                if len(rows) >= cls.BULK_CREATE_BATCH_SIZE:
-                    cls._bulk_create(rows)
+                if len(rows) >= bulk_create_batch_size:
+                    cls._bulk_create(rows, bulk_create_batch_size)
                     rows = []
 
         if not update:
-            cls._bulk_create(rows)
+            cls._bulk_create(rows, bulk_create_batch_size)
 
     @classmethod
     def get_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None) -> None | pd.Series:
@@ -208,7 +207,8 @@ class TimeseriesChunkStore(models.Model):
         return cls._slice_serie(full, start, end)
 
     @classmethod
-    def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...]):
+    def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...],
+                    bulk_create_batch_size=200):
 
 
         """
@@ -223,6 +223,7 @@ class TimeseriesChunkStore(models.Model):
         Args:
             mapping : {(version_value, kind_value,...): serie}
             keys    : ('version','kind',...)
+            bulk_create_batch_size : bulk batch size for bulk insertion
 
         Returns:
         """
@@ -235,13 +236,14 @@ class TimeseriesChunkStore(models.Model):
                 continue
             for sub in cls._chunk(serie):
                 rows.append(cls._build_row(attrs, sub))
-                if len(rows) >= cls.BULK_CREATE_BATCH_SIZE:
-                    cls._bulk_create(rows)
+                if len(rows) >= bulk_create_batch_size:
+                    cls._bulk_create(rows, bulk_create_batch_size)
                     rows = []
-        cls._bulk_create(rows)
+        cls._bulk_create(rows, bulk_create_batch_size)
 
     @classmethod
-    def yield_many_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None):
+    def yield_many_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None,
+                      qs_iterator_chunk_size=200):
         """
         Yield (serie, attrs_dict) for each available timeseries with filters matching attrs.
             - serie will be expressed at STORE_FREQ, STORE_TZ
@@ -251,6 +253,7 @@ class TimeseriesChunkStore(models.Model):
             attrs: filters of query
             start: start index of timeseries
             end: end index of timeseries
+            qs_iterator_chunk_size: size of queryset batch
         """
         # On valide seulement les clés fournies
         bad = set(attrs) - cls.get_model_keys()
@@ -273,7 +276,7 @@ class TimeseriesChunkStore(models.Model):
             yield serie, key_dict
             buffer.clear()
 
-        for row in qs.iterator(chunk_size=cls.ITER_CHUNK_SIZE):
+        for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
             values = tuple(getattr(row, k) for k in cls.get_model_keys())
             if current_values is None:
                 current_values = values
@@ -457,14 +460,14 @@ class TimeseriesChunkStore(models.Model):
         )
 
     @classmethod
-    def _bulk_create(cls, rows: list):
+    def _bulk_create(cls, rows: list, bulk_create_batch_size: int):
         if not rows:
             return
 
         with transaction.atomic():
             cls.objects.bulk_create(
                 rows,
-                batch_size=cls.BULK_CREATE_BATCH_SIZE,  # optionnel : tuning
+                batch_size=bulk_create_batch_size,  # optionnel : tuning
             )
 
     @classmethod
