@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
-KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'chunk_index'}
+KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'is_deleted', 'chunk_index'}
+EMPTY_DATA = lz4.compress(np.array([]))
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
@@ -30,6 +31,7 @@ class TimeseriesChunkStore(models.Model):
     start_ts = models.DateTimeField()        # premier timestamp inclus
     dtype    = models.CharField(max_length=16)  # ex. 'float64'
     updated_at = models.DateTimeField(auto_now=True)  # synchro
+    is_deleted = models.BooleanField(default=False)  # keep trace of deleted objects
 
     # Données brutes
     data = models.BinaryField()
@@ -76,6 +78,13 @@ class TimeseriesChunkStore(models.Model):
             raise ValueError(
                 f"Invalid STORE_TZ {cls.STORE_TZ!r} for model {cls.__name__}"
             )
+
+    def delete(self, **kwargs):
+        """ Soft-delete : conserve la ligne comme tombstone. """
+        self.is_deleted = True
+        self.data = EMPTY_DATA
+        self.save(update_fields=["is_deleted", "updated_at", "data"])
+
     # ------------------ Sérialisation bas niveau ------------------
     @staticmethod
     def _compress(serie: pd.Series) -> (bytes, np.array):
@@ -192,7 +201,7 @@ class TimeseriesChunkStore(models.Model):
             The reconstructed series, or *None* if no chunk matches.
         """
         cls._ensure_all_attrs_specified(attrs)
-        qs = cls.objects.filter(**attrs).order_by('chunk_index')
+        qs = cls.objects.filter(**attrs, is_deleted=False).order_by('chunk_index')
         if start or end:
             qs = cls._filter_interval(qs, start, end)
 
@@ -260,7 +269,7 @@ class TimeseriesChunkStore(models.Model):
         if bad:
             raise ValueError(f"Unknown attribute(s) {bad}")
 
-        qs = cls.objects.filter(**attrs).order_by(*(cls.get_model_keys()), 'chunk_index')
+        qs = cls.objects.filter(**attrs, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
         if start or end:
             qs = cls._filter_interval(qs, start, end)
 
@@ -312,7 +321,7 @@ class TimeseriesChunkStore(models.Model):
               .filter(**filters, updated_at__gt=since)
               .values(*cls.get_model_keys(),
                       "chunk_index", "dtype",
-                      "start_ts", "updated_at"))
+                      "start_ts", "updated_at", "is_deleted"))
         out = []
         for row in qs:
             out.append({
@@ -321,6 +330,7 @@ class TimeseriesChunkStore(models.Model):
                 "dtype": row["dtype"],
                 "start_ts": row["start_ts"],
                 "updated_at": row["updated_at"],
+                "is_deleted": row["is_deleted"],
             })
         return out
 
@@ -336,7 +346,7 @@ class TimeseriesChunkStore(models.Model):
         for item in spec:
             attrs = item["attrs"]
             idx = item["chunk_index"]
-            row = cls.objects.get(**attrs, chunk_index=idx)
+            row = cls.objects.get(**attrs, chunk_index=idx, is_deleted=False)
             blob = row.data
             meta = {"dtype": row.dtype, "start_ts": row.start_ts}
             out.append((blob, attrs, meta))
@@ -352,7 +362,7 @@ class TimeseriesChunkStore(models.Model):
             cls._ensure_all_attrs_specified(attrs)
             idx = cls._chunk_index(pd.Timestamp(meta["start_ts"]))
             cls.objects.update_or_create(
-                defaults=dict(data=blob, **meta),
+                defaults=dict(data=blob, **meta, is_deleted=False),
                 **attrs, chunk_index=idx
             )
 
@@ -429,7 +439,8 @@ class TimeseriesChunkStore(models.Model):
             chunk_index=cls._chunk_index(first_ts),
             start_ts=first_ts,
             dtype=str(arr.dtype),
-            data=compressed
+            data=compressed,
+            is_deleted=False,
         )
 
     @classmethod
@@ -439,6 +450,9 @@ class TimeseriesChunkStore(models.Model):
         # combine first with existing
         try:
             row = cls.objects.get(**attributes)
+            if row.is_deleted:
+                # avoid using deleted row
+                raise cls.DoesNotExist
             ds_existing = cls._decompress(row)
             ds_new = serie.combine_first(ds_existing)
             row = cls._build_row(attrs, ds_new)
@@ -452,6 +466,7 @@ class TimeseriesChunkStore(models.Model):
             'start_ts': row.start_ts,
             'dtype': row.dtype,
             'data': row.data,
+            'is_deleted': False,
         }
 
         cls.objects.update_or_create(

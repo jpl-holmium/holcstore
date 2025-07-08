@@ -114,7 +114,19 @@ class TimeseriesChunkStoreSyncClient:
 
         updates = self._get(f"{self.endpoint}/updates/", params=params)
 
-        for i in range(0, len(updates), batch):
+        # split fetch delete
+        to_fetch, to_delete = [], []
+        for u in updates:
+            (to_delete if u["is_deleted"] else to_fetch).append(u)
+
+        # suppression locale
+        for d in to_delete:
+            self.store_model.objects.filter(
+                **d["attrs"], chunk_index=d["chunk_index"]
+            ).delete()
+
+        # téléchargement / import
+        for i in range(0, len(to_fetch), batch):
             spec  = updates[i : i + batch]
             pack  = self._get(f"{self.endpoint}/pack/", json=spec)
             tuples = [
