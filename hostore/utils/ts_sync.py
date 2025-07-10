@@ -1,13 +1,33 @@
 # ts_sync/views.py
+import functools
+import traceback
+
 import backoff
 import requests
 
-from rest_framework import viewsets, status
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 import base64, pandas as pd
 from typing import Type
 
+DEBUG = False
+
+
+def print_api_exception(view_func):
+    """
+    affiche erreur api dans une view
+    """
+    @functools.wraps(view_func)
+    def wrapper(self, request, *args, **kw):
+        try:
+            return view_func(self, request, *args, **kw)
+        except Exception as exc:
+            if DEBUG:
+                print(f'\nview func {view_func} unexpected error')
+                print(traceback.format_exc())
+
+    return wrapper
 
 
 class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
@@ -32,6 +52,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
 
     # 1) /updates/?since=ISO
     @action(detail=False, methods=["get"])
+    @print_api_exception
     def updates(self, request):
         since = pd.Timestamp(request.query_params["since"])
         filters = {
@@ -43,6 +64,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
 
     # 2) /pack/   POST → export
     @action(detail=False, methods=["get"])
+    @print_api_exception
     def pack(self, request):
         spec    = request.data
         chunks  = self.store_model.export_chunks(spec)
@@ -114,7 +136,19 @@ class TimeseriesChunkStoreSyncClient:
 
         updates = self._get(f"{self.endpoint}/updates/", params=params)
 
-        for i in range(0, len(updates), batch):
+        # split fetch delete
+        to_fetch, to_delete = [], []
+        for u in updates:
+            (to_delete if u["is_deleted"] else to_fetch).append(u)
+
+        # suppression locale
+        for d in to_delete:
+            self.store_model.objects.filter(
+                **d["attrs"], chunk_index=d["chunk_index"]
+            ).delete()
+
+        # téléchargement / import
+        for i in range(0, len(to_fetch), batch):
             spec  = updates[i : i + batch]
             pack  = self._get(f"{self.endpoint}/pack/", json=spec)
             tuples = [

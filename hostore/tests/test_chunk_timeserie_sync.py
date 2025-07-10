@@ -19,7 +19,7 @@ from hostore.utils.ts_sync import TimeseriesChunkStoreSyncViewSet, TimeseriesChu
 # ------------------------------------------------------------------
 #  Modèles “remote” et “local” (mêmes champs, tables distinctes)
 # ------------------------------------------------------------------
-class RemoteYearStore(TimeseriesChunkStore):
+class ServerStore(TimeseriesChunkStore):
     """Table côté ‘serveur’"""
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
@@ -29,7 +29,7 @@ class RemoteYearStore(TimeseriesChunkStore):
         db_table    = "ts_remote_year"
 
 
-class LocalYearStore(TimeseriesChunkStore):
+class ClientStore(TimeseriesChunkStore):
     """Table côté ‘client’"""
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
@@ -40,9 +40,9 @@ class LocalYearStore(TimeseriesChunkStore):
 
 
 # ------------------------------------------------------------------
-#  ViewSet serveur (lié au RemoteYearStore)
+#  ViewSet serveur (lié au ServerStore)
 # ------------------------------------------------------------------
-RemoteSyncViewSet = TimeseriesChunkStoreSyncViewSet.as_factory(RemoteYearStore)
+RemoteSyncViewSet = TimeseriesChunkStoreSyncViewSet.as_factory(ServerStore)
 router = SimpleRouter()
 router.register("sync/year", RemoteSyncViewSet, basename="sync-year")
 urlpatterns = [path("", include(router.urls))]      #   (1)  renommé → urlpatterns
@@ -60,39 +60,27 @@ class SyncIntegrationTestCase(TransactionTestCase):
     def setUp(self):
         # crée les tables manquantes
         with connection.schema_editor(atomic=False) as se:
-            for mdl in (RemoteYearStore, LocalYearStore):
+            for mdl in (ServerStore, ClientStore):
                 if mdl._meta.db_table not in connection.introspection.table_names():
                     se.create_model(mdl)
-        RemoteYearStore.objects.all().delete()
-        self.store_client = TimeseriesChunkStoreSyncClient(endpoint='http://testserver/sync/year', store_model=LocalYearStore)
-        LocalYearStore.objects.all().delete()
+        ServerStore.objects.all().delete()
+        self.sync_client = TimeseriesChunkStoreSyncClient(endpoint='http://testserver/sync/year', store_model=ClientStore)
+        ClientStore.objects.all().delete()
         self.req_client = RequestsClient()
         self.req_client.base_url = "http://testserver/"
         # self.client = APIClient()
 
     def _sync(self, filters=None):
-
-        # # METHODE AVEC APICLIENT client → /updates
-        # since = LocalYearStore.last_updated_at()
-        # updates = self.client.get("/sync/year/updates/", {"since": since.isoformat()}).json()
-        # # client → /pack export
-        # pack = self.client.post("/sync/year/pack/", updates, format="json").json()
-        # # import côté local
-        # tuples = [
-        #     (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
-        #     for item in pack
-        # ]
-        # LocalYearStore.import_chunks(tuples)
-
         with (
             patch.object(requests, "get",  self.req_client.get),
             patch.object(requests, "post", self.req_client.post),
             patch.object(requests, "put",  self.req_client.put),
         ):
-            self.store_client.pull(batch=20, filters=filters)
+            self.sync_client.pull(batch=20, filters=filters)
 
     # --------------------------------------------------------------
     def test_full_sync_and_update(self):
+        # =========== TEST BASE
         # seed serveur
         sere_a1_v1 = self._make_series("2025-01-01", 24 * 31 * 4)
         sere_a2_v1 = self._make_series("2026-01-05", 24 * 50)
@@ -103,16 +91,16 @@ class SyncIntegrationTestCase(TransactionTestCase):
             ({"version": 2, "kind": "c"}, self._make_series("2000-01-05", 24 * 50)),
         )
         for attr, serie in series:
-            RemoteYearStore.set_ts(attr, serie)
-
+            ServerStore.set_ts(attr, serie)
         self._sync()
 
         # vérif intégrité 1
         for attr, serie in series:
-            got = LocalYearStore.get_ts(attr)
+            got = ClientStore.get_ts(attr)
             got = got[got.notnull()]
             assert_series_equal(got, serie)
 
+        # =========== TEST UPDATE + SYNC PARTIEL / TOTAL
         # update server
         sere_a1_v2 = self._make_series("2025-02-01", 24 * 31 * 4)
         sere_a2_v2 = self._make_series("2026-03-01", 24 * 31 * 4)
@@ -121,14 +109,14 @@ class SyncIntegrationTestCase(TransactionTestCase):
             ({"version": 2, "kind": "A"}, sere_a2_v2),
         )
         for attr, serie in series2:
-            RemoteYearStore.set_ts(attr, serie, update=True)
+            ServerStore.set_ts(attr, serie, update=True)
 
         # sync kind B : no changes
         self._sync(filters={"kind": "B"})
 
         # vérif intégrité 1 bis
         for attr, serie in series:
-            got = LocalYearStore.get_ts(attr)
+            got = ClientStore.get_ts(attr)
             got = got[got.notnull()]
             assert_series_equal(got, serie)
 
@@ -141,9 +129,32 @@ class SyncIntegrationTestCase(TransactionTestCase):
             series[2], series[3],
         ]
         for attr, serie in series_verif:
-            got = LocalYearStore.get_ts(attr)
+            got = ClientStore.get_ts(attr)
             got = got[got.notnull()]
             assert_series_equal(got, serie)
+
+        # =========== TEST SUPPRESSION
+        first = ServerStore.objects.filter(version=1).first()
+        first.delete()
+        first.refresh_from_db()
+        self.assertEqual(first.is_deleted, True)
+        ServerStore.objects.filter(version=1).delete()
+
+        self._sync()
+        seen_local = {
+            (key_dict['version'], key_dict['kind']): serie
+            for serie, key_dict in ClientStore.yield_many_ts({})
+        }
+        seen_remote = {
+            (key_dict['version'], key_dict['kind']): serie
+            for serie, key_dict in ServerStore.yield_many_ts({})
+        }
+
+        self.assertEqual(seen_local.keys(), seen_remote.keys())
+        for k in seen_local.keys():
+            assert_series_equal(seen_local[k], seen_remote[k])
+
+        self.assertFalse(ClientStore.objects.filter(version=1, is_deleted=False).exists())
 
     # --------------------------------------------------------------
     @staticmethod
@@ -151,3 +162,12 @@ class SyncIntegrationTestCase(TransactionTestCase):
         idx = pd.date_range(start=start, periods=periods, freq=freq, tz=tz)
         np.random.seed(0)
         return pd.Series(np.random.randn(periods), index=idx)
+
+
+def _display_table_content(table, filters=None):
+    """ debug tool to analyse table content (without data)"""
+    filters = filters or {}
+    df = pd.DataFrame(table.objects.filter(**filters).values())
+    df.drop(['data'], inplace=True, axis=1)
+    print(f'Raw table content for {table.__name__}:')
+    print(df.sort_values(list(df.columns)).to_markdown())

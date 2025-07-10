@@ -284,3 +284,16 @@ def _localise_date(pydate, time=dt.time(), timezone_name=TZ_PARIS):
 def _localise_date_interval(date_start, date_end, timezone_name=TZ_PARIS):
     return (_localise_date(date_start, timezone_name=timezone_name),
             _localise_date(date_end, time=dt.time.max, timezone_name=timezone_name))
+
+
+def _localise_datetime(pydatetime, timezone_name=TZ_PARIS):
+    return pytz.timezone(timezone_name).localize(pydatetime)
+
+
+def _localised_now(timezone_name=TZ_PARIS):
+    now = _localise_datetime(dt.datetime.now(), timezone_name='UTC')
+    return _tz_convert_datetime(now, timezone_name=timezone_name)
+
+
+def _tz_convert_datetime(pydatetime, timezone_name=TZ_PARIS):
+    return pydatetime.astimezone(pytz.timezone(timezone_name))

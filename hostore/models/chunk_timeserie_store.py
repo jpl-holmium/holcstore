@@ -13,14 +13,23 @@ from django.db.models import QuerySet
 from django.db.models.signals import class_prepared
 from django.dispatch import receiver
 from pytz.exceptions import UnknownTimeZoneError
-from hostore.utils.timeseries import _localise_date
-
+from hostore.utils.timeseries import _localise_date, _localised_now
 
 logger = logging.getLogger(__name__)
 
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
-KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'chunk_index'}
+KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'is_deleted', 'chunk_index'}
+EMPTY_DATA = lz4.compress(np.array([]))
+
+
+class ChunkQuerySet(models.QuerySet):
+    """Remplace l'effacement physique par un soft-delete."""
+    def delete(self):
+        return super().update(is_deleted=True, data=EMPTY_DATA,
+                              updated_at=_localised_now(timezone_name='UTC'),
+                              )
+
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
@@ -30,6 +39,7 @@ class TimeseriesChunkStore(models.Model):
     start_ts = models.DateTimeField()        # premier timestamp inclus
     dtype    = models.CharField(max_length=16)  # ex. 'float64'
     updated_at = models.DateTimeField(auto_now=True)  # synchro
+    is_deleted = models.BooleanField(default=False)  # keep trace of deleted objects
 
     # Données brutes
     data = models.BinaryField()
@@ -39,9 +49,9 @@ class TimeseriesChunkStore(models.Model):
     CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
     STORE_TZ   = 'Europe/Paris' # Chunking timezone
     STORE_FREQ   = '1h' # Timeseries storage frequency.
-    ITER_CHUNK_SIZE = 200
-    BULK_CREATE_BATCH_SIZE = 200
+
     _model_keys = None
+    objects = ChunkQuerySet.as_manager()
 
     class Meta:
         unique_together = ['chunk_index']
@@ -77,6 +87,11 @@ class TimeseriesChunkStore(models.Model):
             raise ValueError(
                 f"Invalid STORE_TZ {cls.STORE_TZ!r} for model {cls.__name__}"
             )
+
+    def delete(self, **kwargs):
+        """ Soft-delete : conserve la ligne comme tombstone. """
+        self.__class__.objects.filter(id=self.id).delete()
+
     # ------------------ Sérialisation bas niveau ------------------
     @staticmethod
     def _compress(serie: pd.Series) -> (bytes, np.array):
@@ -123,7 +138,7 @@ class TimeseriesChunkStore(models.Model):
 
     @classmethod
     def set_ts(cls, attrs: dict, serie: pd.Series,
-               update=False, replace=False):
+               update=False, replace=False, bulk_create_batch_size=200):
         """
         Persist a dense time-series in the store.
 
@@ -139,7 +154,7 @@ class TimeseriesChunkStore(models.Model):
         replace : bool, default False
             If True, delete any existing chunks for the same keys
             before inserting the new series.
-
+        bulk_create_batch_size : bulk batch size for bulk insertion
         Notes
         -----
         * ``update`` and ``replace`` are mutually exclusive.
@@ -163,12 +178,12 @@ class TimeseriesChunkStore(models.Model):
                 cls._update_chunk_with_existing(attrs, sub)
             else:
                 rows.append(cls._build_row(attrs, sub))
-                if len(rows) >= cls.BULK_CREATE_BATCH_SIZE:
-                    cls._bulk_create(rows)
+                if len(rows) >= bulk_create_batch_size:
+                    cls._bulk_create(rows, bulk_create_batch_size)
                     rows = []
 
         if not update:
-            cls._bulk_create(rows)
+            cls._bulk_create(rows, bulk_create_batch_size)
 
     @classmethod
     def get_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None) -> None | pd.Series:
@@ -193,7 +208,7 @@ class TimeseriesChunkStore(models.Model):
             The reconstructed series, or *None* if no chunk matches.
         """
         cls._ensure_all_attrs_specified(attrs)
-        qs = cls.objects.filter(**attrs).order_by('chunk_index')
+        qs = cls.objects.filter(**attrs, is_deleted=False).order_by('chunk_index')
         if start or end:
             qs = cls._filter_interval(qs, start, end)
 
@@ -208,7 +223,8 @@ class TimeseriesChunkStore(models.Model):
         return cls._slice_serie(full, start, end)
 
     @classmethod
-    def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...]):
+    def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...],
+                    bulk_create_batch_size=200):
 
 
         """
@@ -223,6 +239,7 @@ class TimeseriesChunkStore(models.Model):
         Args:
             mapping : {(version_value, kind_value,...): serie}
             keys    : ('version','kind',...)
+            bulk_create_batch_size : bulk batch size for bulk insertion
 
         Returns:
         """
@@ -235,13 +252,14 @@ class TimeseriesChunkStore(models.Model):
                 continue
             for sub in cls._chunk(serie):
                 rows.append(cls._build_row(attrs, sub))
-                if len(rows) >= cls.BULK_CREATE_BATCH_SIZE:
-                    cls._bulk_create(rows)
+                if len(rows) >= bulk_create_batch_size:
+                    cls._bulk_create(rows, bulk_create_batch_size)
                     rows = []
-        cls._bulk_create(rows)
+        cls._bulk_create(rows, bulk_create_batch_size)
 
     @classmethod
-    def yield_many_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None):
+    def yield_many_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None,
+                      qs_iterator_chunk_size=200):
         """
         Yield (serie, attrs_dict) for each available timeseries with filters matching attrs.
             - serie will be expressed at STORE_FREQ, STORE_TZ
@@ -251,13 +269,14 @@ class TimeseriesChunkStore(models.Model):
             attrs: filters of query
             start: start index of timeseries
             end: end index of timeseries
+            qs_iterator_chunk_size: size of queryset batch
         """
         # On valide seulement les clés fournies
         bad = set(attrs) - cls.get_model_keys()
         if bad:
             raise ValueError(f"Unknown attribute(s) {bad}")
 
-        qs = cls.objects.filter(**attrs).order_by(*(cls.get_model_keys()), 'chunk_index')
+        qs = cls.objects.filter(**attrs, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
         if start or end:
             qs = cls._filter_interval(qs, start, end)
 
@@ -273,7 +292,7 @@ class TimeseriesChunkStore(models.Model):
             yield serie, key_dict
             buffer.clear()
 
-        for row in qs.iterator(chunk_size=cls.ITER_CHUNK_SIZE):
+        for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
             values = tuple(getattr(row, k) for k in cls.get_model_keys())
             if current_values is None:
                 current_values = values
@@ -309,7 +328,7 @@ class TimeseriesChunkStore(models.Model):
               .filter(**filters, updated_at__gt=since)
               .values(*cls.get_model_keys(),
                       "chunk_index", "dtype",
-                      "start_ts", "updated_at"))
+                      "start_ts", "updated_at", "is_deleted"))
         out = []
         for row in qs:
             out.append({
@@ -318,6 +337,7 @@ class TimeseriesChunkStore(models.Model):
                 "dtype": row["dtype"],
                 "start_ts": row["start_ts"],
                 "updated_at": row["updated_at"],
+                "is_deleted": row["is_deleted"],
             })
         return out
 
@@ -334,8 +354,9 @@ class TimeseriesChunkStore(models.Model):
             attrs = item["attrs"]
             idx = item["chunk_index"]
             row = cls.objects.get(**attrs, chunk_index=idx)
+            attrs["chunk_index"] = row.chunk_index
             blob = row.data
-            meta = {"dtype": row.dtype, "start_ts": row.start_ts}
+            meta = {"dtype": row.dtype, "start_ts": row.start_ts, "is_deleted": row.is_deleted}
             out.append((blob, attrs, meta))
         return out
 
@@ -346,11 +367,10 @@ class TimeseriesChunkStore(models.Model):
         Each tuple is ``(blob_lz4, attrs_dict, meta_dict)``.
         """
         for blob, attrs, meta in payload:
-            cls._ensure_all_attrs_specified(attrs)
-            idx = cls._chunk_index(pd.Timestamp(meta["start_ts"]))
+            cls._ensure_all_attrs_specified(attrs, bonus_keys=['chunk_index'])
             cls.objects.update_or_create(
                 defaults=dict(data=blob, **meta),
-                **attrs, chunk_index=idx
+                **attrs
             )
 
     # -- private helpers --
@@ -426,7 +446,8 @@ class TimeseriesChunkStore(models.Model):
             chunk_index=cls._chunk_index(first_ts),
             start_ts=first_ts,
             dtype=str(arr.dtype),
-            data=compressed
+            data=compressed,
+            is_deleted=False,
         )
 
     @classmethod
@@ -436,6 +457,9 @@ class TimeseriesChunkStore(models.Model):
         # combine first with existing
         try:
             row = cls.objects.get(**attributes)
+            if row.is_deleted:
+                # avoid using deleted row
+                raise cls.DoesNotExist
             ds_existing = cls._decompress(row)
             ds_new = serie.combine_first(ds_existing)
             row = cls._build_row(attrs, ds_new)
@@ -449,6 +473,7 @@ class TimeseriesChunkStore(models.Model):
             'start_ts': row.start_ts,
             'dtype': row.dtype,
             'data': row.data,
+            'is_deleted': False,
         }
 
         cls.objects.update_or_create(
@@ -457,14 +482,14 @@ class TimeseriesChunkStore(models.Model):
         )
 
     @classmethod
-    def _bulk_create(cls, rows: list):
+    def _bulk_create(cls, rows: list, bulk_create_batch_size: int):
         if not rows:
             return
 
         with transaction.atomic():
             cls.objects.bulk_create(
                 rows,
-                batch_size=cls.BULK_CREATE_BATCH_SIZE,  # optionnel : tuning
+                batch_size=bulk_create_batch_size,  # optionnel : tuning
             )
 
     @classmethod
@@ -499,12 +524,14 @@ class TimeseriesChunkStore(models.Model):
         return qs
 
     @classmethod
-    def _ensure_all_attrs_specified(cls, attrs: dict):
+    def _ensure_all_attrs_specified(cls, attrs: dict, bonus_keys=None):
         """
         Vérifie que l'utilisateur a renseigné tous les attributs "métiers"
         """
         attrs_keys = set(attrs.keys())
         model_keys = cls.get_model_keys()
+        if bonus_keys:
+            model_keys = {*model_keys, *bonus_keys}
         if model_keys != attrs_keys:
             raise ValueError(f'Trying to set or get partial attributes {attrs} while full attributes list is {model_keys}')
 
