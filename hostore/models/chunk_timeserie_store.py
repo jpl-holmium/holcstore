@@ -13,8 +13,7 @@ from django.db.models import QuerySet
 from django.db.models.signals import class_prepared
 from django.dispatch import receiver
 from pytz.exceptions import UnknownTimeZoneError
-from hostore.utils.timeseries import _localise_date
-
+from hostore.utils.timeseries import _localise_date, _localised_now
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +21,15 @@ logger = logging.getLogger(__name__)
 # KEYS_ABSTRACT_CLASS.add('id')
 KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'is_deleted', 'chunk_index'}
 EMPTY_DATA = lz4.compress(np.array([]))
+
+
+class ChunkQuerySet(models.QuerySet):
+    """Remplace l'effacement physique par un soft-delete."""
+    def delete(self):
+        return super().update(is_deleted=True, data=EMPTY_DATA,
+                              updated_at=_localised_now(timezone_name='UTC'),
+                              )
+
 
 class TimeseriesChunkStore(models.Model):
     # Partitionnement temporel (null si pas de chunk)
@@ -43,6 +51,7 @@ class TimeseriesChunkStore(models.Model):
     STORE_FREQ   = '1h' # Timeseries storage frequency.
 
     _model_keys = None
+    objects = ChunkQuerySet.as_manager()
 
     class Meta:
         unique_together = ['chunk_index']
@@ -81,9 +90,7 @@ class TimeseriesChunkStore(models.Model):
 
     def delete(self, **kwargs):
         """ Soft-delete : conserve la ligne comme tombstone. """
-        self.is_deleted = True
-        self.data = EMPTY_DATA
-        self.save(update_fields=["is_deleted", "updated_at", "data"])
+        self.__class__.objects.filter(id=self.id).delete()
 
     # ------------------ Sérialisation bas niveau ------------------
     @staticmethod
@@ -346,9 +353,10 @@ class TimeseriesChunkStore(models.Model):
         for item in spec:
             attrs = item["attrs"]
             idx = item["chunk_index"]
-            row = cls.objects.get(**attrs, chunk_index=idx, is_deleted=False)
+            row = cls.objects.get(**attrs, chunk_index=idx)
+            attrs["chunk_index"] = row.chunk_index
             blob = row.data
-            meta = {"dtype": row.dtype, "start_ts": row.start_ts}
+            meta = {"dtype": row.dtype, "start_ts": row.start_ts, "is_deleted": row.is_deleted}
             out.append((blob, attrs, meta))
         return out
 
@@ -359,11 +367,10 @@ class TimeseriesChunkStore(models.Model):
         Each tuple is ``(blob_lz4, attrs_dict, meta_dict)``.
         """
         for blob, attrs, meta in payload:
-            cls._ensure_all_attrs_specified(attrs)
-            idx = cls._chunk_index(pd.Timestamp(meta["start_ts"]))
+            cls._ensure_all_attrs_specified(attrs, bonus_keys=['chunk_index'])
             cls.objects.update_or_create(
-                defaults=dict(data=blob, **meta, is_deleted=False),
-                **attrs, chunk_index=idx
+                defaults=dict(data=blob, **meta),
+                **attrs
             )
 
     # -- private helpers --
@@ -517,12 +524,14 @@ class TimeseriesChunkStore(models.Model):
         return qs
 
     @classmethod
-    def _ensure_all_attrs_specified(cls, attrs: dict):
+    def _ensure_all_attrs_specified(cls, attrs: dict, bonus_keys=None):
         """
         Vérifie que l'utilisateur a renseigné tous les attributs "métiers"
         """
         attrs_keys = set(attrs.keys())
         model_keys = cls.get_model_keys()
+        if bonus_keys:
+            model_keys = {*model_keys, *bonus_keys}
         if model_keys != attrs_keys:
             raise ValueError(f'Trying to set or get partial attributes {attrs} while full attributes list is {model_keys}')
 

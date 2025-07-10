@@ -1,3 +1,7 @@
+### v0.5.1 - 2025-07-09
+- TimeseriesChunkStore handle synchronization of deleted items
+- Fix requirement lz4
+
 ### v0.5.0 - 2025-07-04
 - Added TimeseriesChunkStore : store efficiently dense timeseries, with automatic chunking and compression. Easy client-server syncronisation through a dedicated client class and viewset.
 
