@@ -25,10 +25,14 @@ EMPTY_DATA = lz4.compress(np.array([]))
 
 class ChunkQuerySet(models.QuerySet):
     """Remplace l'effacement physique par un soft-delete."""
-    def delete(self):
-        return super().update(is_deleted=True, data=EMPTY_DATA,
-                              updated_at=_localised_now(timezone_name='UTC'),
-                              )
+    def delete(self, **kwargs):
+        hard_delete = kwargs.pop('hard_delete', False)
+        if hard_delete:
+            super().delete()
+        else:
+            return super().update(is_deleted=True, data=EMPTY_DATA,
+                                  updated_at=_localised_now(timezone_name='UTC'),
+                                  )
 
 
 class TimeseriesChunkStore(models.Model):
@@ -90,7 +94,7 @@ class TimeseriesChunkStore(models.Model):
 
     def delete(self, **kwargs):
         """ Soft-delete : conserve la ligne comme tombstone. """
-        self.__class__.objects.filter(id=self.id).delete()
+        self.__class__.objects.filter(id=self.id).delete(**kwargs)
 
     # ------------------ Sérialisation bas niveau ------------------
     @staticmethod
@@ -167,9 +171,6 @@ class TimeseriesChunkStore(models.Model):
         serie = cls._normalize_index(serie)
         if serie is None:
             return
-        if replace:
-            # we need to delete previous related chunks (previous serie may lay on a greater span than new one)
-            cls.objects.filter(**attrs).delete()
 
         # Enregistrement par chunk
         rows = []
@@ -181,6 +182,20 @@ class TimeseriesChunkStore(models.Model):
                 if len(rows) >= bulk_create_batch_size:
                     cls._bulk_create(rows, bulk_create_batch_size)
                     rows = []
+
+        if replace:
+            # we need to hard delete previous related chunks (previous serie may lay on a greater span than new one)
+            # only over chunk_index deleted (to allow propagation of deleted index to client store)
+            chunk_index_replaced = [r.chunk_index for r in rows]
+            qd_attrs = cls.objects.filter(
+                **attrs,
+            )
+            # hard delete part of the serie within existing chunks index : will be replaced in _bulk_create
+            qd_attrs.filter(
+                chunk_index__in=chunk_index_replaced
+            ).delete(hard_delete=True)
+            # soft delete other chunks : keep trace of deletion
+            qd_attrs.delete()
 
         if not update:
             cls._bulk_create(rows, bulk_create_batch_size)

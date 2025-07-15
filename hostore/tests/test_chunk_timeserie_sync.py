@@ -168,6 +168,7 @@ def _display_table_content(table, filters=None):
     """ debug tool to analyse table content (without data)"""
     filters = filters or {}
     df = pd.DataFrame(table.objects.filter(**filters).values())
-    df.drop(['data'], inplace=True, axis=1)
+    if 'data' in df.columns:
+        df.drop(['data'], inplace=True, axis=1)
     print(f'Raw table content for {table.__name__}:')
     print(df.sort_values(list(df.columns)).to_markdown())

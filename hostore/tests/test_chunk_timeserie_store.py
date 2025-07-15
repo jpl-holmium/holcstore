@@ -90,7 +90,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
         with connection.schema_editor(atomic=False) as se:
             if self.test_table._meta.db_table not in existing:
                 se.create_model(self.test_table)
-        self.test_table.objects.all().delete()
+        self.test_table.objects.all().delete(hard_delete=True)
 
     def setUp(self):
         # Flush de TransactionTestCase supprime nos tables dynamiques.
