@@ -1,8 +1,16 @@
 name: Publish Python 🐍 distribution 📦 to PyPI and TestPyPI
 
 on:
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publier sur PyPI après les tests ?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 jobs:
   build:
@@ -15,6 +23,16 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: "3.x"
+
+    - name: Install dependencies
+      run: |
+        python3 -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Run Django tests
+      run: |
+        python manage.py test
+
     - name: Install pypa/build
       run: >-
         python3 -m
@@ -30,6 +48,7 @@ jobs:
         path: dist/
 
   publish-to-pypi:
+    if: ${{ github.event.inputs.publish == 'true' }}
     name: >-
       Publish Python 🐍 distribution 📦 to PyPI
     needs:
