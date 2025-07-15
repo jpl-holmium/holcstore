@@ -48,7 +48,7 @@ Handle update and replace features.
 ## TimeseriesStore class
 This class is used to store timeseries, using a user provided pattern through its model.
 
-## TimeseriesStore class
+## TimeseriesChunkStore class
 This class is used to store timeseries, using a user provided pattern through its model.
 
 Handle update and replace features.
@@ -151,7 +151,7 @@ datas = MyTimeseriesStore.get_ts(ts_attrs)
 ds_ts1 = datas[0]['data']
 ```
 
-# Basic usage : TimeseriesChunkStore class
+# Basic usage: TimeseriesChunkStore class
 ## Compact time-series storage for Django + PostgreSQL
 
 **TimeseriesChunkStore** is an abstract Django model that lets you persist
@@ -185,16 +185,20 @@ class MyChunkedStore(TimeseriesChunkStore):
     CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
     STORE_TZ   = 'Europe/Paris' # Chunking timezone (also timeseries output tz)
     STORE_FREQ   = '1h' # Timeseries storage frequency. (the store reindex input series but never resample)
-    ITER_CHUNK_SIZE = 200 # Queryset iteration batch size
-    BULK_CREATE_BATCH_SIZE = 200 # Bulk create batch size
 ```
-The Custom fields are **strictly indexation axis**. 
+The Custom fields are **strictly indexation axis** : you **must not** use them to store metadata or redundant data.
 
-You **must not** use them to store metadata or redundant data : these keys will be used to build Meta class unique_together and indexes. When you request a timeserie, all custom fields must be specified.
+During django's setup, any class that inherits from TimeseriesChunkStore will have its Meta properties unique_together and indexes automatically edited, such as it contains all your keys and the mandatory keys from the abstract store.
 
-Following field names cannot be used : 
-`start_ts, data, dtype, updated_at, chunk_index`
+**Do not** : 
+ * define your own Meta.unique_together or Meta.indexes.
+ * define those fields : 
+`start_ts, data, dtype, updated_at, chunk_index, is_deleted`
 
+
+When you request a timeserie, all custom fields must be specified.
+
+Following 
 
 ### 2/ Use your store class
 ```python

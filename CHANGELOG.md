@@ -1,3 +1,9 @@
+### v0.5.2 - 2025-07-15
+- Fixed issue with client sync + replace of existing serie
+- Fixed django setup issue
+- Thread safe (atomic) update
+- Removed ITER_CHUNK_SIZE, BULK_CREATE_BATCH_SIZE properties from store definition
+
 ### v0.5.1 - 2025-07-09
 - TimeseriesChunkStore handle synchronization of deleted items
 - Fix requirement lz4
