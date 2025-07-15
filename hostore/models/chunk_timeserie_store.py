@@ -454,32 +454,33 @@ class TimeseriesChunkStore(models.Model):
     def _update_chunk_with_existing(cls, attrs: dict, serie: pd.Series):
         attributes = {**attrs, 'chunk_index': cls._chunk_index(serie.index[0])}
 
-        # combine first with existing
-        try:
-            row = cls.objects.get(**attributes)
-            if row.is_deleted:
-                # avoid using deleted row
-                raise cls.DoesNotExist
-            ds_existing = cls._decompress(row)
-            ds_new = serie.combine_first(ds_existing)
-            row = cls._build_row(attrs, ds_new)
-        except cls.DoesNotExist:
-            row = cls._build_row(attrs, serie)
-        except cls.MultipleObjectsReturned:
-            raise ValueError(f'Multiple chunks found for attributes {attributes}')
+        with transaction.atomic():
+            # combine first with existing
+            try:
+                row = cls.objects.select_for_update().get(**attributes)
+                if row.is_deleted:
+                    # avoid using deleted row
+                    raise cls.DoesNotExist
+                ds_existing = cls._decompress(row)
+                ds_new = serie.combine_first(ds_existing)
+                row = cls._build_row(attrs, ds_new)
+            except cls.DoesNotExist:
+                row = cls._build_row(attrs, serie)
+            except cls.MultipleObjectsReturned:
+                raise ValueError(f'Multiple chunks found for attributes {attributes}')
 
-        # dict pour defaults
-        defaults = {
-            'start_ts': row.start_ts,
-            'dtype': row.dtype,
-            'data': row.data,
-            'is_deleted': False,
-        }
+            # dict pour defaults
+            defaults = {
+                'start_ts': row.start_ts,
+                'dtype': row.dtype,
+                'data': row.data,
+                'is_deleted': False,
+            }
 
-        cls.objects.update_or_create(
-            defaults=defaults,
-            **attributes
-        )
+            cls.objects.update_or_create(
+                defaults=defaults,
+                **attributes
+            )
 
     @classmethod
     def _bulk_create(cls, rows: list, bulk_create_batch_size: int):
