@@ -198,56 +198,65 @@ During django's setup, any class that inherits from TimeseriesChunkStore will ha
 
 When you request a timeserie, all custom fields must be specified.
 
-Following 
 
 ### 2/ Use your store class
+
 ```python
-# timeseries_usage.py
+# my_timeseries_usage.py
 # Set one
+import pandas as pd
+
 attrs = {"version": 1, "kind": "type1"}
-MyChunkedStore.set_ts(attrs, my_series)          # first write
-MyChunkedStore.set_ts(attrs, delta_series, update=True)   # update (combine_first)
-MyChunkedStore.set_ts(attrs, delta_series, replace=True)   # replace
-MyChunkedStore.set_ts(attrs, delta_series)   # FAIL (attrs exists)
+MyChunkedStore.set_ts(attrs, my_series1)  # first write
+MyChunkedStore.set_ts(attrs, my_series2, update=True)  # update (combine_first)
+MyChunkedStore.set_ts(attrs, my_series3, replace=True)  # replace
+MyChunkedStore.set_ts(attrs, my_series4)  # FAIL (attrs exists)
 
 # Get one
-full   = MyChunkedStore.get_ts(attrs)
-window = MyChunkedStore.get_ts(attrs, start="2025-05-01", end="2025-05-31")
-fail   = MyChunkedStore.get_ts({"version": 1})  # FAIL : must specify all attrs
-none   = MyChunkedStore.get_ts({"version": 1, "kind": "nonexisting"})  # returns None : does not exists
+full = MyChunkedStore.get_ts(attrs)
+window = MyChunkedStore.get_ts(attrs, start=pd.Timestamp("2024-01-01 00:00:00+01:00"), end=pd.Timestamp("2024-06-01 02:00:00+02:00"))
+fail = MyChunkedStore.get_ts({"version": 1})  # FAIL : must specify all attrs
+none = MyChunkedStore.get_ts({"version": 1, "kind": "nonexisting"})  # returns None : does not exists
 
 # Set many
-mapping = {
-    (5, "type1"): series1,
-    (5, "type2"): series2,
-}
-MyChunkedStore.set_many_ts(mapping, keys=("version", "kind"))
+MyChunkedStore.set_many_ts(
+  mapping={
+    (5, "type1"): my_series1,
+    (5, "type2"): my_series2,
+  },
+  keys=("version", "kind")
+)
 
 # Yield many
 series_generator = MyChunkedStore.yield_many_ts({"version": 5})  # contains the 2 (serie, key_dict) from mapping
 
 # CANNOT set many over existing
-MyChunkedStore.set_many_ts(mapping, keys=("version", "kind")) # FAIL : at least one value from mapping already exists
+MyChunkedStore.set_many_ts(mapping, keys=("version", "kind"))  # FAIL : at least one value from mapping already exists
 ```
 
-### 3/ Define the ViewSet (server side)
+### 3/ Setup sync tools
+Two TimeseriesChunkStore can be easily synchronized between a server and a client. Client and server models must be the same
+
+#### 3.1/ Define the ViewSet (server side : serve data)
+You can set throttle, auth etc. through as_factory kwargs.
+
 ```python
 # views.py
 from hostore.utils.ts_sync import TimeseriesChunkStoreSyncViewSet
 
-YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(MyChunkedStoreServerSide, throttle_classes=[])  # pass ViewSet kwargs
+YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(MyChunkStoreServerSide, throttle_classes=[], **kwargs_views)  # pass ViewSet kwargs
 router.register("ts/myendpoint", YearSync, basename="ts-myendpoint")
 ```
 
 
-### 4/ Define the API (client side : pull new data)
+### 3.2/ Define the API (client side : pull new data)
 ```python
 # my_client_sync_module.py
 from hostore.utils.ts_sync import TimeseriesChunkStoreSyncClient
 
 client = TimeseriesChunkStoreSyncClient(
     endpoint="https://api.example.com/ts/myendpoint",
-    store_model=MyChunkedStoreClientSide,
+    store_model=MyChunkStoreClientSide,
 )
 client.pull(batch=100)      # fetch new / updated chunks limiting one batch request to 100 items
 ```
