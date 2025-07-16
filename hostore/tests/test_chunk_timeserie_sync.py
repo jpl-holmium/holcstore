@@ -24,12 +24,19 @@ class ServerStore(TimeseriesChunkStore):
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
 
+    class Meta(TimeseriesChunkStore.Meta):
+        app_label   = "ts_remote"
+        db_table    = "ts_remote_year"
 
 
 class ClientStore(TimeseriesChunkStore):
     """Table côté ‘client’"""
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
+
+    class Meta(TimeseriesChunkStore.Meta):
+        app_label   = "ts_local"
+        db_table    = "ts_local_year"
 
 
 # ------------------------------------------------------------------
@@ -62,13 +69,6 @@ class SyncIntegrationTestCase(TransactionTestCase):
         self.req_client = RequestsClient()
         self.req_client.base_url = "http://testserver/"
         # self.client = APIClient()
-
-        print( 10 * "************************************************************************\n")
-        print(
-            "ATTENTION : Les tests ne couvrent l'initialisation des modèles django. \n"
-            "1 : décommenter TestServerStore\n"
-            "2 : lancer ./manage.py shell\n"
-        )
 
     def _sync(self, filters=None):
         with (

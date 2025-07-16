@@ -573,11 +573,9 @@ def _auto_meta_for_chunk_store(sender, **kwargs):
     if not issubclass(sender, TimeseriesChunkStore) or sender is TimeseriesChunkStore:
         return
 
-    # --- business_keys sans passer par get_fields() -----------------
-    # sinon raise a l'init de django
-    local = [f for f in sender._meta.local_fields
-             if not f.auto_created and f.name not in KEYS_ABSTRACT_CLASS]
-    business_keys = tuple(sorted(f.name for f in local))          # ex. ('kind','version')
+    business_keys = tuple(sorted(sender.get_model_keys()))
+    if not business_keys:
+        business_keys = ()
 
     # # # ---------- unique_together ------------------------------------
     sender._meta.unique_together = (tuple([*business_keys, "chunk_index"]), )
@@ -610,9 +608,3 @@ def _idx_name(model, suffix: str) -> str:
         short = blake2b(base.encode(), digest_size=15).hexdigest()  # 4 car.
         base = short[:30]
     return base
-
-# class TestServerStore(TimeseriesChunkStore):
-#     """Table côté ‘serveur’"""
-#     version = models.IntegerField()
-#     kind    = models.CharField(max_length=20)
-
