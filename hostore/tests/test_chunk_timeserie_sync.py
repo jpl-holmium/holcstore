@@ -63,12 +63,6 @@ class SyncIntegrationTestCase(TransactionTestCase):
         self.req_client.base_url = "http://testserver/"
         # self.client = APIClient()
 
-        print( 10 * "************************************************************************\n")
-        print(
-            "ATTENTION : Les tests ne couvrent l'initialisation des modèles django. \n"
-            "1 : décommenter TestServerStore\n"
-            "2 : lancer ./manage.py shell\n"
-        )
 
     def _sync(self, filters=None):
         with (
