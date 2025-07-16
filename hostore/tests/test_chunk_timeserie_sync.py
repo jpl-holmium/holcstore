@@ -24,19 +24,12 @@ class ServerStore(TimeseriesChunkStore):
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
 
-    class Meta(TimeseriesChunkStore.Meta):
-        app_label   = "ts_remote"
-        db_table    = "ts_remote_year"
 
 
 class ClientStore(TimeseriesChunkStore):
     """Table côté ‘client’"""
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
-
-    class Meta(TimeseriesChunkStore.Meta):
-        app_label   = "ts_local"
-        db_table    = "ts_local_year"
 
 
 # ------------------------------------------------------------------
@@ -69,6 +62,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
         self.req_client = RequestsClient()
         self.req_client.base_url = "http://testserver/"
         # self.client = APIClient()
+
 
     def _sync(self, filters=None):
         with (
@@ -141,6 +135,34 @@ class SyncIntegrationTestCase(TransactionTestCase):
         ServerStore.objects.filter(version=1).delete()
 
         self._sync()
+        self._assert_stores_equal()
+
+        self.assertFalse(ClientStore.objects.filter(version=1, is_deleted=False).exists())
+
+        # =========== TEST REPLACE
+        # replace server
+        sere_a1_v2 = self._make_series("2025-03-01", 24 * 31 * 4)
+        sere_a2_v2 = self._make_series("2026-04-01", 24 * 31 * 4)
+        sere_new_v2 = self._make_series("2025-04-01", 24 * 31)
+        series3 = (
+            ({"version": 1, "kind": "A"}, sere_a1_v2),
+            ({"version": 2, "kind": "A"}, sere_a2_v2),
+            ({"version": 2, "kind": "new_one"}, sere_new_v2),
+        )
+        for attr, serie in series3:
+            ServerStore.set_ts(attr, serie, replace=True)
+
+        self._sync()
+        self._assert_stores_equal()
+
+    # --------------------------------------------------------------
+    @staticmethod
+    def _make_series(start, periods, freq="1h", tz="Europe/Paris"):
+        idx = pd.date_range(start=start, periods=periods, freq=freq, tz=tz)
+        np.random.seed(0)
+        return pd.Series(np.random.randn(periods), index=idx)
+
+    def _assert_stores_equal(self):
         seen_local = {
             (key_dict['version'], key_dict['kind']): serie
             for serie, key_dict in ClientStore.yield_many_ts({})
@@ -154,20 +176,12 @@ class SyncIntegrationTestCase(TransactionTestCase):
         for k in seen_local.keys():
             assert_series_equal(seen_local[k], seen_remote[k])
 
-        self.assertFalse(ClientStore.objects.filter(version=1, is_deleted=False).exists())
-
-    # --------------------------------------------------------------
-    @staticmethod
-    def _make_series(start, periods, freq="1h", tz="Europe/Paris"):
-        idx = pd.date_range(start=start, periods=periods, freq=freq, tz=tz)
-        np.random.seed(0)
-        return pd.Series(np.random.randn(periods), index=idx)
-
 
 def _display_table_content(table, filters=None):
     """ debug tool to analyse table content (without data)"""
     filters = filters or {}
     df = pd.DataFrame(table.objects.filter(**filters).values())
-    df.drop(['data'], inplace=True, axis=1)
+    if 'data' in df.columns:
+        df.drop(['data'], inplace=True, axis=1)
     print(f'Raw table content for {table.__name__}:')
     print(df.sort_values(list(df.columns)).to_markdown())

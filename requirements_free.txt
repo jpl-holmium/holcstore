@@ -1,0 +1,15 @@
+asgiref
+backoff
+Django
+djangorestframework
+lz4
+packaging
+pandas
+pandas-stubs
+pip
+pyarrow
+requests
+setuptools
+sqlparse
+typing_extensions
+wheel
