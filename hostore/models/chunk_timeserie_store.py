@@ -580,7 +580,10 @@ def _auto_meta_for_chunk_store(sender, **kwargs):
     business_keys = tuple(sorted(f.name for f in local))          # ex. ('kind','version')
 
     # # # ---------- unique_together ------------------------------------
-    sender._meta.unique_together = (tuple([*business_keys, "chunk_index"]), )
+    axis_keys = tuple((*business_keys, "chunk_index"))
+    sender._meta.unique_together = (axis_keys, )
+    print(f'Setup TimeseriesChunkStore "{sender.__name__}"')
+    print(f'unique_together = {sender._meta.unique_together}')
 
     # ---------- indexes --------------------------------------------
     def _has_index(fields):
@@ -588,31 +591,51 @@ def _auto_meta_for_chunk_store(sender, **kwargs):
         fld = set(fields)
         return any(set(idx.fields) == fld for idx in sender._meta.indexes)
 
-    # !! already added from unique_together contraint !!
-    # composite_fields = (*business_keys, 'chunk_index')
-    # if not _has_index(composite_fields):
-    #     sender._meta.indexes.append(models.Index(fields=list(composite_fields)))
+    index_required = [
+        (('updated_at',), 'upd'),
+        (axis_keys, 'axis'),
+    ]
 
-    if not _has_index(('updated_at',)):
-        sender._meta.indexes.append(
-            models.Index(
-                fields=['updated_at'],
-                name=_idx_name(sender, 'upd')  # set a name for testing purposes
+    for fields, tag in index_required:
+        if not _has_index(fields):
+            sender._meta.indexes.append(
+                models.Index(
+                    fields=fields,
+                    name=_idx_name(sender, tag)  # set a name for testing purposes
+                )
             )
-        )
+    [print(f'index : {i}') for i in sender._meta.indexes]
 
 def _idx_name(model, suffix: str) -> str:
     """
-    Construit un nom d’index unique <= 30 car. : <table>_<suffix>_<hash4>
-    """
-    base  = f"{model._meta.db_table}_{suffix}"
-    if len(base) > 30:
-        short = blake2b(base.encode(), digest_size=15).hexdigest()  # 4 car.
-        base = short[:30]
-    return base
+    Build a portable index name (≤ 30 chars) that :
+      • keeps the *beginning* of the table name for readability,
+      • appends a short hash for uniqueness,
+      • never starts with “_” or a digit.
 
-# class TestServerStore(TimeseriesChunkStore):
-#     """Table côté ‘serveur’"""
-#     version = models.IntegerField()
-#     kind    = models.CharField(max_length=20)
+    Pattern :  <prefix>_<hash>
+      - prefix  : first N chars of "<table>_<suffix>"
+      - hash    : 6-char blake2b
+    """
+    full = f"{model._meta.db_table}_{suffix}"          # ex : mytable_kind_chunk
+    h    = blake2b(full.encode(), digest_size=3).hexdigest()  # 6 chars
+
+    max_len   = 30
+    keep_len  = max_len - len(h) - 1                  # “_” separator
+    prefix    = full[:keep_len]
+
+    name = f"{prefix}_{h}"
+
+    # ensure it starts with a letter
+    if not name[0].isalpha():
+        name = f"idx_{name[:-4]}_{h}"[:max_len]
+
+    return name
+
+
+class TestMyTimeseriesChunkStore(TimeseriesChunkStore):
+    version = models.IntegerField()
+    kind_very_long_name_for_testing_purpose = models.CharField(max_length=50)
+    CHUNK_AXIS = ('year', 'month')
+
 
