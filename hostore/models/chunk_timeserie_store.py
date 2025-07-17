@@ -26,9 +26,22 @@ EMPTY_DATA = lz4.compress(np.array([]))
 
 class ChunkQuerySet(models.QuerySet):
     """Remplace l'effacement physique par un soft-delete."""
-    def delete(self, **kwargs):
-        keep_tracking = kwargs.pop('keep_tracking', False)
+    def delete(self, keep_tracking=False, _disable_sync_safety=False):
+        """
+        Overridden delete method that handles the tracking of deleted object.
+
+        Raises a ValueError if the user is trying to delete objects with ALLOW_CLIENT_SERVER_SYNC=True and
+        keep_tracking=False
+
+        Args:
+            keep_tracking:
+            _disable_sync_safety: should not be used by user. Disable consistency check between
+            ALLOW_CLIENT_SERVER_SYNC and keep_tracking=False
+        """
         if not keep_tracking:
+            if self.model.ALLOW_CLIENT_SERVER_SYNC and not _disable_sync_safety:
+                raise ValueError(f'Trying to delete {self.model.__name__} objects with ALLOW_CLIENT_SERVER_SYNC=True and '
+                                 f'keep_tracking=False. This would lead to inconsistencies in client store.')
             super().delete()
         else:
             return super().update(is_deleted=True, data=EMPTY_DATA,
@@ -128,6 +141,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
     STORE_TZ   = 'Europe/Paris' # Chunking timezone
     STORE_FREQ   = '1h' # Timeseries storage frequency.
+    ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
 
     _model_keys = None
     objects = ChunkQuerySet.as_manager()
@@ -265,9 +279,10 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                 **attrs,
             )
             # hard delete part of the serie within existing chunks index : will be replaced in _bulk_create
+            # _disable_sync_safety to avoid check raise
             qd_attrs.filter(
                 chunk_index__in=chunk_index_replaced
-            ).delete(keep_tracking=False)
+            ).delete(keep_tracking=False, _disable_sync_safety=True)
             # soft delete other chunks : keep trace of deletion
             qd_attrs.delete(keep_tracking=True)
 

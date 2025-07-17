@@ -2,7 +2,7 @@ import base64, datetime as dt
 from unittest.mock import patch
 
 import requests
-from django.db import connection, models
+from django.db import connection, models, IntegrityError
 from django.test import TransactionTestCase, override_settings
 from django.urls import path, include
 from rest_framework.routers import SimpleRouter
@@ -23,13 +23,14 @@ class ServerStore(TimeseriesChunkStore):
     """Table côté ‘serveur’"""
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
-
+    ALLOW_CLIENT_SERVER_SYNC = True
 
 
 class ClientStore(TimeseriesChunkStore):
     """Table côté ‘client’"""
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
+    ALLOW_CLIENT_SERVER_SYNC = True
 
 
 # ------------------------------------------------------------------
@@ -56,9 +57,9 @@ class SyncIntegrationTestCase(TransactionTestCase):
             for mdl in (ServerStore, ClientStore):
                 if mdl._meta.db_table not in connection.introspection.table_names():
                     se.create_model(mdl)
-        ServerStore.objects.all().delete()
+        ServerStore.objects.all().delete(_disable_sync_safety=True)
         self.sync_client = TimeseriesChunkStoreSyncClient(endpoint='http://testserver/sync/year', store_model=ClientStore)
-        ClientStore.objects.all().delete()
+        ClientStore.objects.all().delete(_disable_sync_safety=True)
         self.req_client = RequestsClient()
         self.req_client.base_url = "http://testserver/"
         # self.client = APIClient()
@@ -152,6 +153,43 @@ class SyncIntegrationTestCase(TransactionTestCase):
         for attr, serie in series3:
             ServerStore.set_ts(attr, serie, replace=True)
 
+        self._sync()
+        self._assert_stores_equal()
+
+        # =========== TEST DELETE SET MANY
+        # delete without tracking on server side WILL lead to inconsistent results client side
+        # => forbidden
+        with self.assertRaises(ValueError):
+            ServerStore.objects.all().delete(keep_tracking=False)
+
+        # clear
+        ServerStore.objects.all().delete(keep_tracking=True)
+
+        # tracked model => if the table was not empty, you cannot set or set many
+        attr, serie = series[0]
+        with self.assertRaises(IntegrityError):
+            ServerStore.set_ts(attr, serie)
+
+        mapping = {
+            (k['version'], k['kind']): ds for k, ds in series3
+        }
+        with self.assertRaises(IntegrityError):
+            ServerStore.set_many_ts(mapping, keys=("version", "kind"))
+
+        # some legal update of series
+        series4 = (
+            ({"version": 1, "kind": "A"}, self._make_series("2025-03-01", 24 * 31 * 6)),
+            ({"version": 2, "kind": "A"}, self._make_series("2026-04-01", 24 * 31 * 4)),
+            ({"version": 2, "kind": "new_one"}, self._make_series("2025-04-01", 24 * 31 * 7)),
+            ({"version": 2, "kind": "new_one2"}, self._make_series("2025-04-01", 24 * 31 * 7)),
+        )
+        for attr, serie in series4:
+            ServerStore.set_ts(attr, serie, update=True)
+        self._sync()
+        self._assert_stores_equal()
+
+        # another legal update
+        ServerStore.objects.filter(kind="A").delete(keep_tracking=True)
         self._sync()
         self._assert_stores_equal()
 
