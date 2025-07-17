@@ -86,7 +86,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
             ({"version": 2, "kind": "c"}, self._make_series("2000-01-05", 24 * 50)),
         )
         for attr, serie in series:
-            ServerStore.set_ts(attr, serie)
+            ServerStore.set_ts(attr, serie, replace=True)
         self._sync()
 
         # vérif intégrité 1
@@ -169,13 +169,13 @@ class SyncIntegrationTestCase(TransactionTestCase):
 
         # tracked model => if the table was not empty, you cannot set or set many
         attr, serie = series[0]
-        with self.assertRaises(IntegrityError):
+        with self.assertRaises(ValueError):
             ServerStore.set_ts(attr, serie)
 
         mapping = {
             (k['version'], k['kind']): ds for k, ds in series3
         }
-        with self.assertRaises(IntegrityError):
+        with self.assertRaises(ValueError):
             ServerStore.set_many_ts(mapping, keys=("version", "kind"))
 
         # some legal update of series

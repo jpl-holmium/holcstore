@@ -306,6 +306,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         """
         if update and replace:
             raise ValueError('update and replace are mutually exclusive')
+
+        if (not update) and (not replace) and cls.ALLOW_CLIENT_SERVER_SYNC:
+            raise ValueError(f'Trying to use set_ts with model {cls.__name__} '
+                             f'without update or replace option while ALLOW_CLIENT_SERVER_SYNC=True.')
+
         cls._ensure_all_attrs_specified(attrs)
         serie = cls._normalize_index(serie)
         if serie is None:
@@ -398,6 +403,10 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
         Returns:
         """
+        if cls.ALLOW_CLIENT_SERVER_SYNC:
+            raise ValueError(f'Trying to use set_many_ts with model {cls.__name__} '
+                             f'while ALLOW_CLIENT_SERVER_SYNC=True.')
+
         rows = []
         for ktuple, serie in mapping.items():
             attrs = dict(zip(keys, ktuple))

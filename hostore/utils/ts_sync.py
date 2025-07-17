@@ -56,7 +56,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     def updates(self, request):
         if not self.store_model.ALLOW_CLIENT_SERVER_SYNC:
             raise ValueError(f'Trying to use TimeseriesChunkStoreSyncViewSet with model {self.store_model.__name__} '
-                             f'with ALLOW_CLIENT_SERVER_SYNC=False.')
+                             f'while ALLOW_CLIENT_SERVER_SYNC=False.')
 
         since = pd.Timestamp(request.query_params["since"])
         filters = {
@@ -72,7 +72,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     def pack(self, request):
         if not self.store_model.ALLOW_CLIENT_SERVER_SYNC:
             raise ValueError(f'Trying to use TimeseriesChunkStoreSyncViewSet with model {self.store_model.__name__} '
-                             f'with ALLOW_CLIENT_SERVER_SYNC=False.')
+                             f'while ALLOW_CLIENT_SERVER_SYNC=False.')
 
         spec    = request.data
         chunks  = self.store_model.export_chunks(spec)
@@ -132,7 +132,7 @@ class TimeseriesChunkStoreSyncClient:
         """
         if not store_model.ALLOW_CLIENT_SERVER_SYNC:
             raise ValueError(f'Trying to use TimeseriesChunkStoreSyncClient with model {store_model.__name__} '
-                             f'with ALLOW_CLIENT_SERVER_SYNC=False.')
+                             f'while ALLOW_CLIENT_SERVER_SYNC=False.')
 
         self.endpoint = endpoint.rstrip("/")
         self.store_model    = store_model
