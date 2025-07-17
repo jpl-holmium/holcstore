@@ -145,7 +145,7 @@ class TimeseriesChunkStoreSyncClient:
         for d in to_delete:
             self.store_model.objects.filter(
                 **d["attrs"], chunk_index=d["chunk_index"]
-            ).delete()
+            ).delete(keep_tracking=True)  # do not track deleted objects client side
 
         # téléchargement / import
         for i in range(0, len(to_fetch), batch):

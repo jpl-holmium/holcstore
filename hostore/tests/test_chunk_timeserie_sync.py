@@ -129,10 +129,10 @@ class SyncIntegrationTestCase(TransactionTestCase):
 
         # =========== TEST SUPPRESSION
         first = ServerStore.objects.filter(version=1).first()
-        first.delete()
+        first.delete(keep_tracking=True)
         first.refresh_from_db()
         self.assertEqual(first.is_deleted, True)
-        ServerStore.objects.filter(version=1).delete()
+        ServerStore.objects.filter(version=1).delete(keep_tracking=True)
 
         self._sync()
         self._assert_stores_equal()

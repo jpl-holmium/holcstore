@@ -27,8 +27,8 @@ EMPTY_DATA = lz4.compress(np.array([]))
 class ChunkQuerySet(models.QuerySet):
     """Remplace l'effacement physique par un soft-delete."""
     def delete(self, **kwargs):
-        hard_delete = kwargs.pop('hard_delete', False)
-        if hard_delete:
+        keep_tracking = kwargs.pop('keep_tracking', False)
+        if not keep_tracking:
             super().delete()
         else:
             return super().update(is_deleted=True, data=EMPTY_DATA,
@@ -267,9 +267,9 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             # hard delete part of the serie within existing chunks index : will be replaced in _bulk_create
             qd_attrs.filter(
                 chunk_index__in=chunk_index_replaced
-            ).delete(hard_delete=True)
+            ).delete(keep_tracking=False)
             # soft delete other chunks : keep trace of deletion
-            qd_attrs.delete()
+            qd_attrs.delete(keep_tracking=True)
 
         if not update:
             cls._bulk_create(rows, bulk_create_batch_size)
