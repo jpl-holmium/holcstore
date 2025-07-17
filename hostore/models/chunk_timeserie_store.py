@@ -10,6 +10,7 @@ import lz4.frame as lz4
 import numpy as np
 import pandas as pd
 from django.db.models import QuerySet
+from django.db.models.base import ModelBase
 from django.db.models.signals import class_prepared
 from django.dispatch import receiver
 from pytz.exceptions import UnknownTimeZoneError
@@ -34,8 +35,82 @@ class ChunkQuerySet(models.QuerySet):
                                   updated_at=_localised_now(timezone_name='UTC'),
                                   )
 
+def _idx_name(model, suffix: str, *, max_len: int = 30) -> str:
+    """
+    Return a unique, deterministic index name that satisfies common RDBMS
+    length limits (≤ *max_len* chars, default 30).
 
-class TimeseriesChunkStore(models.Model):
+    • Base pattern    "<db_table>_<suffix>"
+    • If too long →   keep the *prefix* (first part) and append a 4-hex digest
+                      so the name stays human-readable **and** unique.
+
+    Example
+    -------
+    >>> _idx_name(MyModel, "axis")
+    'app_mymodel_axis_ab12'
+    """
+    base = f"{model._meta.db_table}_{suffix}"
+    if len(base) <= max_len:
+        return base
+
+    # Reserve 5 chars (“_” + 4-char hash) for the uniqueness suffix
+    prefix = base[: max_len - 5]
+    digest = blake2b(base.encode(), digest_size=2).hexdigest()  # 4 hex chars
+    return f"{prefix}_{digest}"
+
+
+class _TCSMeta(ModelBase):
+    """
+    Métaclasse injectée dans `TimeseriesChunkStore`.
+
+    • Ajoute automatiquement aux sous-classes NON abstraites :
+        - unique_together = (*business_keys, 'chunk_index')
+        - Index 'axis'     sur (*business_keys, 'chunk_index')
+        - Index 'upd'      sur updated_at
+    """
+
+    def __new__(mcls, name, bases, attrs, **kwargs):
+        new_cls = super().__new__(mcls, name, bases, attrs, **kwargs)
+
+        # On ignore la classe abstraite
+        if new_cls._meta.abstract:
+            return new_cls
+
+        opts = new_cls._meta         # raccourci
+
+        # 1. Keys déclarées par l’utilisateur (hors champs internes)
+        business_keys = [
+            f.name for f in opts.local_fields          # uniquement ceux ajoutés dans le modèle concret
+            if not f.auto_created and f.name not in KEYS_ABSTRACT_CLASS
+        ]
+        business_keys.sort()
+        axis_keys = (*business_keys, "chunk_index")
+
+        # 2. UNIQUE_TOGETHER
+        opts.unique_together = (axis_keys,)
+        opts.original_attrs["unique_together"] = opts.unique_together  # <-- visible par makemigrations
+
+        # 3. INDEXES
+        def _has_index(fields) -> bool:
+            return any(set(idx.fields) == set(fields) for idx in opts.indexes)
+
+        required = [
+            (axis_keys,        "axis"),
+            (("updated_at",),  "upd"),
+        ]
+        for fields, tag in required:
+            if not _has_index(fields):
+                opts.indexes.append(
+                    models.Index(fields=list(fields), name=_idx_name(new_cls, tag))
+                )
+
+        # idem pour le détecteur de migrations
+        opts.original_attrs["indexes"] = opts.indexes
+
+        return new_cls
+
+
+class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     # Partitionnement temporel (null si pas de chunk)
     chunk_index = models.IntegerField()
 
@@ -58,7 +133,6 @@ class TimeseriesChunkStore(models.Model):
     objects = ChunkQuerySet.as_manager()
 
     class Meta:
-        unique_together = ['chunk_index']
         abstract = True
 
     @classmethod
@@ -560,77 +634,6 @@ class TimeseriesChunkStore(models.Model):
         elif end:
             serie = serie.loc[:end]
         return serie
-
-@receiver(class_prepared)
-def _auto_meta_for_chunk_store(sender, **kwargs):
-    """
-    Enrichit automatiquement les sous-classes de TimeseriesChunkStore :
-      • ajoute unique_together = (*business_keys, 'chunk_index')
-      • ajoute un index composite (*business_keys, 'chunk_index')
-      • ajoute un index sur updated_at
-    """
-    # Ne rien faire pour la classe abstraite ou pour des modèles sans champ métier
-    if not issubclass(sender, TimeseriesChunkStore) or sender is TimeseriesChunkStore:
-        return
-
-    # --- business_keys sans passer par get_fields() -----------------
-    # sinon raise a l'init de django
-    local = [f for f in sender._meta.local_fields
-             if not f.auto_created and f.name not in KEYS_ABSTRACT_CLASS]
-    business_keys = tuple(sorted(f.name for f in local))          # ex. ('kind','version')
-
-    # # # ---------- unique_together ------------------------------------
-    axis_keys = tuple((*business_keys, "chunk_index"))
-    sender._meta.unique_together = (axis_keys, )
-    print(f'Setup TimeseriesChunkStore "{sender.__name__}"')
-    print(f'unique_together = {sender._meta.unique_together}')
-
-    # ---------- indexes --------------------------------------------
-    def _has_index(fields):
-        """True si un index existant porte exactement ces champs (ordre indifférent)."""
-        fld = set(fields)
-        return any(set(idx.fields) == fld for idx in sender._meta.indexes)
-
-    index_required = [
-        (('updated_at',), 'upd'),
-        (axis_keys, 'axis'),
-    ]
-
-    for fields, tag in index_required:
-        if not _has_index(fields):
-            sender._meta.indexes.append(
-                models.Index(
-                    fields=fields,
-                    name=_idx_name(sender, tag)  # set a name for testing purposes
-                )
-            )
-    [print(f'index : {i}') for i in sender._meta.indexes]
-
-def _idx_name(model, suffix: str) -> str:
-    """
-    Build a portable index name (≤ 30 chars) that :
-      • keeps the *beginning* of the table name for readability,
-      • appends a short hash for uniqueness,
-      • never starts with “_” or a digit.
-
-    Pattern :  <prefix>_<hash>
-      - prefix  : first N chars of "<table>_<suffix>"
-      - hash    : 6-char blake2b
-    """
-    full = f"{model._meta.db_table}_{suffix}"          # ex : mytable_kind_chunk
-    h    = blake2b(full.encode(), digest_size=3).hexdigest()  # 6 chars
-
-    max_len   = 30
-    keep_len  = max_len - len(h) - 1                  # “_” separator
-    prefix    = full[:keep_len]
-
-    name = f"{prefix}_{h}"
-
-    # ensure it starts with a letter
-    if not name[0].isalpha():
-        name = f"idx_{name[:-4]}_{h}"[:max_len]
-
-    return name
 
 
 class TestMyTimeseriesChunkStore(TimeseriesChunkStore):
