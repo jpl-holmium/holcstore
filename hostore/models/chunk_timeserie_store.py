@@ -5,6 +5,7 @@ from hashlib import blake2b
 from typing import Union, List
 
 import pytz
+from django.core.exceptions import ImproperlyConfigured
 from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
@@ -81,6 +82,7 @@ class _TCSMeta(ModelBase):
         - Index 'axis'     sur (*business_keys, 'chunk_index')
         - Index 'upd'      sur updated_at
     """
+    _FROZEN_ATTRS = ('CHUNK_AXIS', 'STORE_TZ', 'STORE_FREQ', 'ALLOW_CLIENT_SERVER_SYNC')
 
     def __new__(mcls, name, bases, attrs, **kwargs):
         new_cls = super().__new__(mcls, name, bases, attrs, **kwargs)
@@ -89,23 +91,23 @@ class _TCSMeta(ModelBase):
         if new_cls._meta.abstract:
             return new_cls
 
-        opts = new_cls._meta         # raccourci
-
-        # 1. Keys déclarées par l’utilisateur (hors champs internes)
+        meta = new_cls._meta         # raccourci
+        # 1 : unique_together + indexes
+        # 1.1. Keys déclarées par l’utilisateur (hors champs internes)
         business_keys = [
-            f.name for f in opts.local_fields          # uniquement ceux ajoutés dans le modèle concret
+            f.name for f in meta.local_fields          # uniquement ceux ajoutés dans le modèle concret
             if not f.auto_created and f.name not in KEYS_ABSTRACT_CLASS
         ]
         business_keys.sort()
         axis_keys = (*business_keys, "chunk_index")
 
-        # 2. UNIQUE_TOGETHER
-        opts.unique_together = (axis_keys,)
-        opts.original_attrs["unique_together"] = opts.unique_together  # <-- visible par makemigrations
+        # 1.2. UNIQUE_TOGETHER
+        meta.unique_together = (axis_keys,)
+        meta.original_attrs["unique_together"] = meta.unique_together
 
-        # 3. INDEXES
+        # 1.3. INDEXES
         def _has_index(fields) -> bool:
-            return any(set(idx.fields) == set(fields) for idx in opts.indexes)
+            return any(set(idx.fields) == set(fields) for idx in meta.indexes)
 
         required = [
             (axis_keys,        "axis"),
@@ -113,14 +115,46 @@ class _TCSMeta(ModelBase):
         ]
         for fields, tag in required:
             if not _has_index(fields):
-                opts.indexes.append(
+                meta.indexes.append(
                     models.Index(fields=list(fields), name=_idx_name(new_cls, tag))
                 )
 
         # idem pour le détecteur de migrations
-        opts.original_attrs["indexes"] = opts.indexes
+        meta.original_attrs["indexes"] = meta.indexes
 
+        # 2 : table signature with class properties
+        # 2.1. Construire la signature immuable
+        sig = "_".join([
+            "ca" + "_".join(new_cls.CHUNK_AXIS),   # ex. cxyear_month
+            "f" + new_cls.STORE_FREQ,          # ex. freq1h
+            "tz" + new_cls.STORE_TZ.replace('/', '_'),  # ex. tzEurope_Paris
+            "sync" if new_cls.ALLOW_CLIENT_SERVER_SYNC else "nosync",
+        ])
+
+        # 2.2. Nom de table par défaut : <app>_<model>__<signature>
+        default_table = f"{meta.app_label}_{name.lower()}__{sig}"
+
+        # 2.3. Détecter si l’utilisateur a déjà fixé db_table
+        # -----------------------------------------------
+        default_django_table = f"{meta.app_label}_{name.lower()}"
+
+        if meta.db_table == default_django_table:
+            meta.db_table = default_table
+            meta.original_attrs["db_table"] = default_table
+        else:
+            # Vérif cohérence si db_table a été fourni
+            if sig not in meta.db_table:
+                raise ImproperlyConfigured(
+                    f"`db_table` ({meta.db_table}) ne reflète pas la config "
+                    f"immuable ({sig})."
+                )
         return new_cls
+
+    def __setattr__(cls, name, value):
+        """ block setting any of _FROZEN_ATTRS """
+        if name in cls._FROZEN_ATTRS and hasattr(cls, name):
+            raise AttributeError(f"{name} est immuable après la 1ʳᵉ migration.")
+        super().__setattr__(name, value)
 
 
 class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
