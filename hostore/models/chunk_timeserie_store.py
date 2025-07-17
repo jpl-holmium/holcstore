@@ -22,8 +22,10 @@ logger = logging.getLogger(__name__)
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
 KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'is_deleted', 'chunk_index'}
-EMPTY_DATA = lz4.compress(np.array([]))
+FROZEN_ATTRS = ('CHUNK_AXIS', 'STORE_TZ', 'STORE_FREQ', 'ALLOW_CLIENT_SERVER_SYNC')
 
+EMPTY_DATA = lz4.compress(np.array([]))
+PG_MAX_NAME = 63
 
 class ChunkQuerySet(models.QuerySet):
     """Remplace l'effacement physique par un soft-delete."""
@@ -72,6 +74,22 @@ def _idx_name(model, suffix: str, *, max_len: int = 30) -> str:
     digest = blake2b(base.encode(), digest_size=2).hexdigest()  # 4 hex chars
     return f"{prefix}_{digest}"
 
+def _tbl_name(app_label: str, model_name: str, sig: str,
+              *, max_len: int = PG_MAX_NAME) -> str:
+    """
+    Renvoie un nom de table <= *max_len*.
+    • Patron de base : "<app>_<model>__<signature>"
+    • Si trop long  : tronque le préfixe et ajoute un digest sur 8 hex.
+    """
+    base = f"{app_label}_{model_name.lower()}__{sig}"
+    if len(base) <= max_len:
+        return base
+
+    # Réserver 9 car. pour "_" + digest(8 hex)
+    digest = blake2b(base.encode(), digest_size=4).hexdigest()  # 8 hex
+    prefix = base[: max_len - 9]
+    return f"{prefix}_{digest}"
+
 
 class _TCSMeta(ModelBase):
     """
@@ -82,7 +100,6 @@ class _TCSMeta(ModelBase):
         - Index 'axis'     sur (*business_keys, 'chunk_index')
         - Index 'upd'      sur updated_at
     """
-    _FROZEN_ATTRS = ('CHUNK_AXIS', 'STORE_TZ', 'STORE_FREQ', 'ALLOW_CLIENT_SERVER_SYNC')
 
     def __new__(mcls, name, bases, attrs, **kwargs):
         new_cls = super().__new__(mcls, name, bases, attrs, **kwargs)
@@ -132,7 +149,7 @@ class _TCSMeta(ModelBase):
         ])
 
         # 2.2. Nom de table par défaut : <app>_<model>__<signature>
-        default_table = f"{meta.app_label}_{name.lower()}__{sig}"
+        default_table = _tbl_name(meta.app_label, name, sig)
 
         # 2.3. Détecter si l’utilisateur a déjà fixé db_table
         # -----------------------------------------------
@@ -152,7 +169,7 @@ class _TCSMeta(ModelBase):
 
     def __setattr__(cls, name, value):
         """ block setting any of _FROZEN_ATTRS """
-        if name in cls._FROZEN_ATTRS and hasattr(cls, name):
+        if name in FROZEN_ATTRS and hasattr(cls, name):
             raise AttributeError(f"{name} est immuable après la 1ʳᵉ migration.")
         super().__setattr__(name, value)
 
@@ -685,9 +702,9 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return serie
 
 
-class TestMyTimeseriesChunkStore(TimeseriesChunkStore):
-    version = models.IntegerField()
-    kind_very_long_name_for_testing_purpose = models.CharField(max_length=50)
-    CHUNK_AXIS = ('year', 'month')
+# class TestMyTimeseriesChunkStore(TimeseriesChunkStore):
+#     version = models.IntegerField()
+#     kind_very_long_name_for_testing_purpose = models.CharField(max_length=50)
+#     CHUNK_AXIS = ('year', 'month')
 
 
