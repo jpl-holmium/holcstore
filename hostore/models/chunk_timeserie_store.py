@@ -242,7 +242,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return lz4.compress(arr.tobytes()), arr
 
     @classmethod
-    def _decompress(cls, row, mem_view=False) -> pd.Series:
+    def _decompress(cls, row, mem_view=False, return_np=False) -> pd.Series:
         blob = row.data
         dtype = row.dtype
         if mem_view:
@@ -252,7 +252,10 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             raw = lz4.decompress(blob)
             arr = np.frombuffer(raw, dtype=dtype)
         idx = cls._rebuild_index(row, len(arr))
-        return pd.Series(arr, index=idx)
+        if return_np:
+            return idx, arr
+        else:
+            return pd.Series(arr, index=idx)
 
     # ------------------------------------------------------------------
     # PUBLIC METHODS
@@ -445,16 +448,23 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             qs = cls._filter_interval(qs, start, end)
 
         current_values = None
-        buffer = []
-
+        buffer_data = []
+        min_idx, max_idx = None, None
         def flush():
-            if not buffer:
+            if not buffer_data:
                 return
-            serie = pd.concat(buffer)
+
+            serie = pd.Series(
+                index=pd.date_range(start=min_idx, end=max_idx, inclusive='both', freq=cls.STORE_FREQ),
+                data=np.concatenate(buffer_data)
+            )
             serie = cls._slice_serie(serie, start, end)
             key_dict = dict(zip(cls.get_model_keys(), current_values))
             yield serie, key_dict
-            buffer.clear()
+            # fixme ? done outside to be allowed to erase _idx
+            # buffer_data.clear()
+            # min_idx = None
+            # max_idx = None
 
         for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
             values = tuple(getattr(row, k) for k in cls.get_model_keys())
@@ -463,8 +473,16 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             elif values != current_values:
                 # nouvelle combinaison → on émet la série courante
                 yield from flush()
+                buffer_data.clear()
+                min_idx = None
+                max_idx = None
+
                 current_values = values
-            buffer.append(cls._decompress(row))
+            idx, data = cls._decompress(row, return_np=True)
+            min_idx = min(min_idx, idx.min()) if min_idx else idx.min()
+            max_idx = max(max_idx, idx.max()) if max_idx else idx.max()
+            # buffer_idx.append(idx)
+            buffer_data.append(data)
 
         # flush final
         yield from flush()
