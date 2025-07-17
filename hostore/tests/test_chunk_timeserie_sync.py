@@ -106,8 +106,9 @@ class SyncIntegrationTestCase(TransactionTestCase):
         for attr, serie in series2:
             ServerStore.set_ts(attr, serie, update=True)
 
-        # sync kind B : no changes
+        # sync kind B : no changes for kind A on client side
         self._sync(filters={"kind": "B"})
+        # TODO Vérifier qu'il n'y pas d'appel de synchronisation de B - aucune modification
 
         # vérif intégrité 1 bis
         for attr, serie in series:
@@ -115,8 +116,9 @@ class SyncIntegrationTestCase(TransactionTestCase):
             got = got[got.notnull()]
             assert_series_equal(got, serie)
 
-        # sync all
+        # sync kind A
         self._sync(filters={"kind": "A"})
+
         # vérif intégrité 2
         series_verif = [
             ({"version": 1, "kind": "A"}, sere_a1_v2.combine_first(sere_a1_v1)),
