@@ -195,6 +195,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
 
     _model_keys = None
+    _model_td = None
     objects = ChunkQuerySet.as_manager()
 
     class Meta:
@@ -206,6 +207,12 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         if cls._model_keys is None:
             cls._model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
         return cls._model_keys
+
+    @classmethod
+    def _get_model_timedelta(cls) -> pd.Timedelta:
+        if cls._model_td is None:
+            cls._model_td = pd.to_timedelta(cls.STORE_FREQ)
+        return cls._model_td
 
     # valeurs de chunk autorisées
     def __init_subclass__(cls, **kwargs):
@@ -242,7 +249,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return lz4.compress(arr.tobytes()), arr
 
     @classmethod
-    def _decompress(cls, row, mem_view=False, return_np=False) -> pd.Series:
+    def _decompress(cls, row, mem_view=False, return_light=False) -> pd.Series:
         blob = row.data
         dtype = row.dtype
         if mem_view:
@@ -251,10 +258,12 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         else:
             raw = lz4.decompress(blob)
             arr = np.frombuffer(raw, dtype=dtype)
-        idx = cls._rebuild_index(row, len(arr))
-        if return_np:
-            return idx, arr
+
+        if return_light:
+            idx_min, idx_max = cls._bound_index(row, len(arr))
+            return idx_min, idx_max, arr
         else:
+            idx = cls._rebuild_index(row, len(arr))
             return pd.Series(arr, index=idx)
 
     # ------------------------------------------------------------------
@@ -478,10 +487,9 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                 max_idx = None
 
                 current_values = values
-            idx, data = cls._decompress(row, return_np=True)
-            min_idx = min(min_idx, idx.min()) if min_idx else idx.min()
-            max_idx = max(max_idx, idx.max()) if max_idx else idx.max()
-            # buffer_idx.append(idx)
+            _idx_min, _idx_max, data = cls._decompress(row, return_light=True)
+            min_idx = min(min_idx, _idx_min) if min_idx else _idx_min
+            max_idx = max(max_idx, _idx_max) if max_idx else _idx_max
             buffer_data.append(data)
 
         # flush final
@@ -674,6 +682,12 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                 rows,
                 batch_size=bulk_create_batch_size,  # optionnel : tuning
             )
+
+    @classmethod
+    def _bound_index(cls, row, length: int):
+        min_idx = pd.Timestamp(row.start_ts).tz_convert(cls.STORE_TZ)
+        max_idx = min_idx + (length - 1) * cls._get_model_timedelta()
+        return min_idx, max_idx
 
     @classmethod
     def _rebuild_index(cls, row, length: int):
