@@ -168,6 +168,7 @@ class TimeseriesChunkStoreSyncClient:
                 for item in pack
             ]
             self.store_model.import_chunks(tuples)
+        return len(to_fetch), len(to_delete)
 
     # ----------- requête HTTP avec back-off paramétrable --------------
     def _get(self, url: str, **kwargs):
