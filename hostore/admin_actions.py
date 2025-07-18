@@ -51,6 +51,7 @@ def download_timeseries_from_store(modeladmin, request, queryset):
     for ts_obj in holc_ts_qs:
         obj_content = ts_obj.decoded_ts_data
         ds = obj_content.pop('data')
+        obj_content.pop('id')
 
         obj_content = {k: v for k, v in obj_content.items() if k[0] != '_'}
         datas.append((ds, obj_content))

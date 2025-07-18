@@ -1,14 +1,17 @@
 import pandas as pd
-from django.test import TestCase
+from django.test import TransactionTestCase
 
-from hostore.models import TestDataStore
+from hostore.tests.tests_basics import TestDataStore
 from hostore.utils.timeseries import ts_combine_first
+from hostore.utils.utils_test import TempTestTableHelper
 
 
-class HoCacheSliceDelayTestCase(TestCase):
+class HoCacheSliceDelayTestCase(TransactionTestCase, TempTestTableHelper):
     databases = ('default',)
+    test_table = TestDataStore
 
     def setUp(self):
+        self._ensure_tables()
         # Set up data for the tests
         # For example, create a HoCache instance
         self.test_prm = 'test_prm'

@@ -4,14 +4,23 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 import pytz
-from django.test import TestCase
+from django.test import TransactionTestCase
 
-from hostore.models import TestDataStore
+from hostore.models import Store
+from hostore.utils.utils_test import TempTestTableHelper
 
 
-class HoCacheTestCase(TestCase):
+class TestDataStore(Store):
+    class Meta(Store.Meta):
+        abstract = False
+        app_label = 'hostore'
+
+class HoCacheTestCase(TransactionTestCase, TempTestTableHelper):
     databases = ('default',)
+    test_table = TestDataStore
+
     def setUp(self):
+        self._ensure_tables()
         # Set up data for the tests
         # For example, create a HoCache instance
         self.test_prm = 'test_prm'

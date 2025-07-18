@@ -432,17 +432,3 @@ class Store(models.Model):
         else:
             qs.delete()
 
-
-class TestDataStore(Store):
-    class Meta(Store.Meta):
-        abstract = False
-        app_label = 'hostore'
-
-
-class TestDataStoreWithAttribute(Store):
-    year = models.IntegerField()
-    class Meta(Store.Meta):
-        abstract = False
-        app_label = 'hostore'
-        constraints = [models.UniqueConstraint(fields=['prm', 'client_id', 'year', 'created_at'], name='hostore_TestDataStoreWithAttribute_unq'), ]
-

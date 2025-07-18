@@ -1,18 +1,19 @@
-import datetime as dt
 import io
 import zipfile
 
 import pandas as pd
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
+from django.contrib import admin
 from django.contrib.admin import AdminSite
 from django.contrib.auth import get_user_model
+from django.db import models
 from django.http import HttpResponse
-from django.test import TestCase
+from django.test import TransactionTestCase
 
-from hostore.admin import TestTimeseriesStoreWithAttributeAdmin
 from hostore.admin_actions import download_timeseries_from_store
-from hostore.models import TestTimeseriesStoreWithAttribute
+from hostore.models import TimeseriesStore
+from hostore.utils.utils_test import TempTestTableHelper
 
 
 def gen_serie(start, end, data, freq='1h'):
@@ -20,19 +21,40 @@ def gen_serie(start, end, data, freq='1h'):
     return pd.Series(data, index=dt_rng, name='data')
 
 
-class DownloadTimeseriesAdminActionTest(TestCase):
+class TestAdminTimeseriesStoreWithAttribute(TimeseriesStore):
+    year = models.IntegerField()
+    kind = models.CharField(max_length=100)
+
+    class Meta(TimeseriesStore.Meta):
+        abstract = False
+        constraints = [models.UniqueConstraint(fields=['year', 'kind'], name='hostore_TestAdminTimeseriesStoreWithAttribute_unq'), ]
+        app_label = 'ts_inline'
+        managed = True
+
+
+class TestTimeseriesStoreWithAttributeAdmin(admin.ModelAdmin):
+    resource_classes = [TestAdminTimeseriesStoreWithAttribute]
+    list_display = ('year', 'kind', )
+    list_filter = ('year', 'kind', )
+    actions = [download_timeseries_from_store]
+
+
+class DownloadTimeseriesAdminActionTest(TransactionTestCase, TempTestTableHelper):
+    databases = ('default',)
+    test_table = TestAdminTimeseriesStoreWithAttribute
 
     def setUp(self):
+        self._ensure_tables()
         # populate TestTimeseriesStoreWithAttribute
         ts_attrs_y_2020_kind_a = dict(year=2020, kind='a')
         ds_y_2020_kind_a = gen_serie("2020-01-01 00:00:00+00:00", "2020-01-01 02:00:00+00:00", [1, 2, 3])
-        TestTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2020_kind_a, ds_y_2020_kind_a)
+        TestAdminTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2020_kind_a, ds_y_2020_kind_a)
         self.ts_attrs_y_2020_kind_a = ts_attrs_y_2020_kind_a
         self.ds_y_2020_kind_a = ds_y_2020_kind_a
 
         ts_attrs_y_2020_kind_b = dict(year=2020, kind='b')
         ds_y_2020_kind_b = gen_serie("2020-01-01 00:00:00+01:00", "2020-01-01 02:00:00+01:00", [10, 20, 30])
-        TestTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2020_kind_b, ds_y_2020_kind_b)
+        TestAdminTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2020_kind_b, ds_y_2020_kind_b)
         self.ts_attrs_y_2020_kind_b = ts_attrs_y_2020_kind_b
         self.ds_y_2020_kind_b = ds_y_2020_kind_b
 
@@ -46,10 +68,10 @@ class DownloadTimeseriesAdminActionTest(TestCase):
 
         # Create an instance of the admin class for your model
         self.model_admin = TestTimeseriesStoreWithAttributeAdmin(
-            TestTimeseriesStoreWithAttribute, self.site)
+            TestAdminTimeseriesStoreWithAttribute, self.site)
 
     def test_zip_content(self):
-        queryset = TestTimeseriesStoreWithAttribute.objects.all()
+        queryset = TestAdminTimeseriesStoreWithAttribute.objects.all()
         response = download_timeseries_from_store(self.model_admin, self.mock_request, queryset)
         self.assertIsInstance(response, HttpResponse)
         byte_content = response.content
@@ -62,4 +84,5 @@ class DownloadTimeseriesAdminActionTest(TestCase):
             with zip_file.open('content_summary.csv') as specific_file:
                 # Read the file content (assuming it's a text file, like CSV)
                 file_content = specific_file.read().decode('utf-8')
-                self.assertEquals(file_content, ';filename;id;year;kind\n0;export_serie_0.csv;1;2020;a\n1;export_serie_1.csv;2;2020;b\n')
+                expected = ';filename;year;kind\n0;export_serie_0.csv;2020;a\n1;export_serie_1.csv;2020;b\n'
+                self.assertEquals(file_content, expected)

@@ -1,8 +1,11 @@
 import pandas as pd
-from django.test import TestCase
+from django.db import models
+from django.test import TestCase, TransactionTestCase
 
-from hostore.models import TestTimeseriesStoreWithAttribute
+from hostore.models import TimeseriesStore
 from hostore.utils.timeseries import ts_combine_first
+from hostore.utils.utils_test import TempTestTableHelper
+
 
 # ./manage.py test hostore.tests.tests_timeseries_store.TimeseriesCacheTestCase
 
@@ -11,10 +14,22 @@ def gen_serie(start, end, data, freq='1h'):
     return pd.Series(data, index=dt_rng, name='data')
 
 
-class TimeseriesCacheTestCase(TestCase):
+class TestTimeseriesStoreWithAttribute(TimeseriesStore):
+    year = models.IntegerField()
+    kind = models.CharField(max_length=100)
+
+    class Meta(TimeseriesStore.Meta):
+        abstract = False
+        constraints = [models.UniqueConstraint(fields=['year', 'kind'], name='hostore_TestTimeseriesStoreWithAttribute_unq'), ]
+        app_label = 'ts_inline'
+        managed = True
+
+class TimeseriesCacheTestCase(TransactionTestCase, TempTestTableHelper):
     databases = ('default',)
+    test_table = TestTimeseriesStoreWithAttribute
 
     def setUp(self):
+        self._ensure_tables()
         ts_attrs_y_2020_kind_a = dict(year=2020, kind='a')
         ds_y_2020_kind_a = gen_serie("2020-01-01 00:00:00+00:00", "2020-01-01 02:00:00+00:00", [1, 2, 3])
         TestTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2020_kind_a, ds_y_2020_kind_a)
@@ -32,7 +47,7 @@ class TimeseriesCacheTestCase(TestCase):
         TestTimeseriesStoreWithAttribute.set_ts(ts_attrs_y_2024_kind_a, ds_y_2024_kind_a)
         self.ts_attrs_y_2024_kind_a = ts_attrs_y_2024_kind_a
         self.ds_y_2024_kind_a = ds_y_2024_kind_a
-        
+
     def test_get_w_attributes(self):
 
         # test get - 2020 a

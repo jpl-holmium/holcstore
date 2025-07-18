@@ -1,11 +1,12 @@
 import datetime as dt
 import numpy as np
 import pandas as pd
-from django.db import models, connection, IntegrityError
+from django.db import models, IntegrityError
 from django.test import TransactionTestCase
 
 from hostore.models import TimeseriesChunkStore
 from hostore.utils.timeseries import ts_combine_first, _localise_date_interval
+from hostore.utils.utils_test import TempTestTableHelper
 
 
 class TestStoreChunkYearMonth(TimeseriesChunkStore):
@@ -68,7 +69,7 @@ def assert_series_equal(s1, s2, **kwargs):
 # Tests principaux
 # ---------------------------------------------------------------------------
 
-class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
+class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper):
     __unittest_skip__ = True
 
     test_table = None
@@ -82,20 +83,10 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase):
     # création des tables à chaque test
     # -------------------------------------------------------------------
 
-    def _ensure_tables(self):
-        """(Re)crée les tables manquantes après un flush Django."""
-        existing = connection.introspection.table_names()
-        if self.test_table is None:
-            raise ValueError('test_table is None')
-        with connection.schema_editor(atomic=False) as se:
-            if self.test_table._meta.db_table not in existing:
-                se.create_model(self.test_table)
-        self.test_table.objects.all().delete(keep_tracking=False)
-
     def setUp(self):
         # Flush de TransactionTestCase supprime nos tables dynamiques.
         # On les recrée si nécessaire avant chaque test.
-        self._ensure_tables()
+        self._ensure_tables(delete_kw=dict(keep_tracking=False))
 
     @classmethod
     def make_series(cls, start, periods, freq="1h", seed=0, full_nan=False):

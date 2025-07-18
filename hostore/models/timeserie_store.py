@@ -148,13 +148,3 @@ class TimeseriesStore(models.Model):
         """
         qs = cls.objects.filter(**custom_filters)
         qs.delete()
-
-
-class TestTimeseriesStoreWithAttribute(TimeseriesStore):
-    year = models.IntegerField()
-    kind = models.CharField(max_length=100)
-
-    class Meta(TimeseriesStore.Meta):
-        abstract = False
-        app_label = 'hostore'
-        constraints = [models.UniqueConstraint(fields=['year', 'kind'], name='hostore_TestTimeseriesStoreWithAttribute_unq'), ]
