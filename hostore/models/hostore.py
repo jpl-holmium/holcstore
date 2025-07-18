@@ -32,7 +32,8 @@ class Store(models.Model):
 
     class Meta:
         abstract = True
-        unique_together = ('prm', 'client_id', 'version')
+        constraints = [models.UniqueConstraint(fields=['prm', 'client_id', 'version'],
+                                               name='%(app_label)s_%(class)s_prm_clientid_version'), ]
         indexes = [models.Index(fields=['prm', 'client_id']), ]
 
     @classmethod
@@ -430,19 +431,4 @@ class Store(models.Model):
             qs.filter(client_id=client_id).delete()
         else:
             qs.delete()
-
-
-class TestDataStore(Store):
-    class Meta(Store.Meta):
-        abstract = False
-        app_label = 'hostore'
-
-
-class TestDataStoreWithAttribute(Store):
-    year = models.IntegerField()
-    class Meta(Store.Meta):
-        abstract = False
-        app_label = 'hostore'
-        unique_together = ('prm', 'client_id', 'year', 'created_at')
-
 

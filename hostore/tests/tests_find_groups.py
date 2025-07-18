@@ -2,16 +2,19 @@ import datetime as dt
 
 import pandas as pd
 import pytz
-from django.test import TestCase
+from django.test import TransactionTestCase
 
-from hostore.models import TestDataStore
+from hostore.tests.tests_basics import TestDataStore
 from hostore.utils.range.range import Range
+from hostore.utils.utils_test import TempTestTableHelper
 
 
-class HoCacheFindGroupsTestCase(TestCase):
+class HoCacheFindGroupsTestCase(TransactionTestCase, TempTestTableHelper):
     databases = ('default',)
-    
+    test_table = TestDataStore
+
     def setUp(self):
+        self._ensure_tables()
         self.test_client_id = 1
         self.test_data = {}
 

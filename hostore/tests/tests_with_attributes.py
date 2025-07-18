@@ -2,15 +2,28 @@ import datetime as dt
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from django.test import TestCase
+from django.db import models
+from django.test import TransactionTestCase
 
-from hostore.models import TestDataStoreWithAttribute
+from hostore.models import Store
+from hostore.utils.utils_test import TempTestTableHelper
 
 
-class HoCacheWithAttributesTestCase(TestCase):
+class TestDataStoreWithAttribute(Store):
+    year = models.IntegerField()
+    class Meta(Store.Meta):
+        abstract = False
+        constraints = [models.UniqueConstraint(fields=['prm', 'client_id', 'year', 'created_at'], name='hostore_TestDataStoreWithAttribute_unq'), ]
+        app_label = 'ts_inline'
+        managed = True
+
+
+class HoCacheWithAttributesTestCase(TransactionTestCase, TempTestTableHelper):
     databases = ('default',)
+    test_table = TestDataStoreWithAttribute
 
     def setUp(self):
+        self._ensure_tables()
         # Set up data for the tests
         # For example, create a HoCache instance
         self.test_prm = 'test_prm'

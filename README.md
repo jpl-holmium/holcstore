@@ -20,23 +20,23 @@ HoLcStore is a Django app for creating a simple TimeSeries store in your databas
 
 1. Add "holcstore" to your INSTALLED_APPS setting like this
 ```python
-    INSTALLED_APPS = [
-        ...,
-        "holcstore",
-    ]
+INSTALLED_APPS = [
+    ...,
+    "holcstore",
+]
 ```
 
 
 2. Start using the abstract model ``Store`` by importing it
 ```python
-    from hostore.models import Store
+from hostore.models import Store
 
-    class YourStore(Store):
-        # add new fields
+class YourStore(Store):
+    # add new fields
 
-        class Meta(Store.Meta):
-            abstract = False
-            # add your meta
+    class Meta(Store.Meta):
+        abstract = False
+        # add your meta
 ```
 # Choose the appropriate store
 
@@ -58,65 +58,67 @@ Store timeseries by chunk for a better performance with large timeseries.
 User friendly API to perform a client-server sync.
 
 # Basic Usage: Store class
+This store is appropriate if you want to store using a "key - value" pattern.
 
 #### Saving a timeserie to database
 
 ```python
-    from path.to.YourStore import YourStore
-    import pandas as pd
+from path.to.YourStore import YourStore
+import pandas as pd
 
-    key = "3000014324556"
-    client_id = 0
-    idx = pd.date_range('2024-01-01 00:00:00+00:00', '2024-01-02 00:00:00+00:00', freq='30min')
-    ds = pd.Series(data=[1]*len(idx), index=idx)
-    # Put the load curve to the store without versionning
-    YourStore.set_lc(key, ds, client_id)
-    # If you want to activate the versionning 
-    YourStore.set_lc(key, ds, client_id, versionning=True)
-    # Each time you call set_lc with your id, a new version will be saved in the database
+key = "3000014324556"
+client_id = 0
+idx = pd.date_range('2024-01-01 00:00:00+00:00', '2024-01-02 00:00:00+00:00', freq='30min')
+ds = pd.Series(data=[1]*len(idx), index=idx)
+# Put the load curve to the store without versionning
+YourStore.set_lc(key, ds, client_id)
+# If you want to activate the versionning 
+YourStore.set_lc(key, ds, client_id, versionning=True)
+# Each time you call set_lc with your id, a new version will be saved in the database
 ```
 
 #### Saving multiple timeseries to database
 
 ```python
-    from path.to.YourStore import YourStore
-    import pandas as pd
+from path.to.YourStore import YourStore
+import pandas as pd
 
-    key = "3000014324556"
-    client_id = 0
-    idx = pd.date_range('2024-01-01 00:00:00+00:00', '2024-01-02 00:00:00+00:00', freq='30min')
-    df = pd.Series(data={'key1': [1]*len(idx), 'key2': [2]*len(idx), }, index=idx)
-    # Put the load curve to the store without versionning
-    YourStore.set_many_lc(df, client_id)
-    # If you want to activate the versionning 
-    YourStore.set_many_lc(df, client_id, versionning=True)
+key = "3000014324556"
+client_id = 0
+idx = pd.date_range('2024-01-01 00:00:00+00:00', '2024-01-02 00:00:00+00:00', freq='30min')
+df = pd.Series(data={'key1': [1]*len(idx), 'key2': [2]*len(idx), }, index=idx)
+# Put the load curve to the store without versionning
+YourStore.set_many_lc(df, client_id)
+# If you want to activate the versionning 
+YourStore.set_many_lc(df, client_id, versionning=True)
 ```
 
 #### Getting a load curve from the database
 
 ```python
-    from path.to.YourStore import YourStore
+from path.to.YourStore import YourStore
 
-    key = "3000014324556"
-    client_id = 0
-    # Get the load curve from the database
-    # I multiple versions exists, they will be combined beginning with the version 0 and using 
-    # https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.combine_first.html
-    datas = YourStore.get_lc(key, client_id)
-    
-    if not datas:
-        my_timeserie = datas[0]['data']
-        last_updated = datas[0]['last_modified']
-    
-    # If you want to retreive all versions 
-    datas = YourStore.get_lc(key, client_id, combined_versions=False)
-    # datas contains all timeseries linked to key
-    
-    # If you want to retreive a specific version
-    datas = YourStore.get_lc(key, client_id, version=1)
+key = "3000014324556"
+client_id = 0
+# Get the load curve from the database
+# I multiple versions exists, they will be combined beginning with the version 0 and using 
+# https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.combine_first.html
+datas = YourStore.get_lc(key, client_id)
+
+if not datas:
+    my_timeserie = datas[0]['data']
+    last_updated = datas[0]['last_modified']
+
+# If you want to retreive all versions 
+datas = YourStore.get_lc(key, client_id, combined_versions=False)
+# datas contains all timeseries linked to key
+
+# If you want to retreive a specific version
+datas = YourStore.get_lc(key, client_id, version=1)
 ```
 
 # Basic Usage: TimeseriesStore class
+This store is the easiest to use, but has less features than TimeseriesChunkStore
 
 ### Define your class in models.py
 ```python
@@ -185,6 +187,7 @@ class MyChunkedStore(TimeseriesChunkStore):
     CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
     STORE_TZ   = 'Europe/Paris' # Chunking timezone (also timeseries output tz)
     STORE_FREQ   = '1h' # Timeseries storage frequency. (the store reindex input series but never resample)
+    ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
 ```
 The Custom fields are **strictly indexation axis** : you **must not** use them to store metadata or redundant data.
 
@@ -193,24 +196,23 @@ During django's setup, any class that inherits from TimeseriesChunkStore will ha
 **Do not** : 
  * define your own Meta.unique_together or Meta.indexes.
  * define those fields : 
-`start_ts, data, dtype, updated_at, chunk_index, is_deleted`
+`start_ts, data, dtype, updated_at, chunk_index, is_deleted`.
+ * edit "Store settings" : `CHUNK_AXIS, STORE_TZ, STORE_FREQ, ALLOW_CLIENT_SERVER_SYNC` once the table has been created through migration. This **will** lead to data corruption.
 
-
-When you request a timeserie, all custom fields must be specified.
 
 
 ### 2/ Use your store class
-
+This summarize use cases with legal and illegal usages.
 ```python
 # my_timeseries_usage.py
 # Set one
 import pandas as pd
 
-attrs = {"version": 1, "kind": "type1"}
+attrs = {"version": 1, "kind": "kind1"}
 MyChunkedStore.set_ts(attrs, my_series1)  # first write
 MyChunkedStore.set_ts(attrs, my_series2, update=True)  # update (combine_first)
 MyChunkedStore.set_ts(attrs, my_series3, replace=True)  # replace
-MyChunkedStore.set_ts(attrs, my_series4)  # FAIL (attrs exists)
+MyChunkedStore.set_ts(attrs, my_series4)  # FAIL : attrs exists
 
 # Get one
 full = MyChunkedStore.get_ts(attrs)
@@ -221,8 +223,8 @@ none = MyChunkedStore.get_ts({"version": 1, "kind": "nonexisting"})  # returns N
 # Set many
 MyChunkedStore.set_many_ts(
   mapping={
-    (5, "type1"): my_series1,
-    (5, "type2"): my_series2,
+    (5, "kind1"): my_series1,
+    (5, "kind2"): my_series2,
   },
   keys=("version", "kind")
 )
@@ -235,7 +237,11 @@ MyChunkedStore.set_many_ts(mapping, keys=("version", "kind"))  # FAIL : at least
 ```
 
 ### 3/ Setup sync tools
-Two TimeseriesChunkStore can be easily synchronized between a server and a client. Client and server models must be the same
+Two TimeseriesChunkStore can be easily synchronized between a server and a client. Client and server models must be the same.
+
+You must set ALLOW_CLIENT_SERVER_SYNC=True if you want to use those features. In that case please note some particular behaviour :
+ * If you need to delete objects on server side, you must pass keep_tracking=True to delete method. Eg : ```ServerStore.objects.filter(version=1).delete(keep_tracking=True)```. Otherwise a ValueError will be raised.
+ * You **cannot** use the set_ts(replace=False, update=False) or set_many_ts. Otherwise a ValueError will be raised.
 
 #### 3.1/ Define the ViewSet (server side : serve data)
 You can set throttle, auth etc. through as_factory kwargs.
@@ -249,7 +255,7 @@ router.register("ts/myendpoint", YearSync, basename="ts-myendpoint")
 ```
 
 
-### 3.2/ Define the API (client side : pull new data)
+#### 3.2/ Define the API (client side : pull new data)
 ```python
 # my_client_sync_module.py
 from hostore.utils.ts_sync import TimeseriesChunkStoreSyncClient

@@ -54,6 +54,10 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     @print_api_exception
     def updates(self, request):
+        if not self.store_model.ALLOW_CLIENT_SERVER_SYNC:
+            raise ValueError(f'Trying to use TimeseriesChunkStoreSyncViewSet with model {self.store_model.__name__} '
+                             f'while ALLOW_CLIENT_SERVER_SYNC=False.')
+
         since = pd.Timestamp(request.query_params["since"])
         filters = {
             k: v for k, v in request.query_params.items()
@@ -66,6 +70,10 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["get"])
     @print_api_exception
     def pack(self, request):
+        if not self.store_model.ALLOW_CLIENT_SERVER_SYNC:
+            raise ValueError(f'Trying to use TimeseriesChunkStoreSyncViewSet with model {self.store_model.__name__} '
+                             f'while ALLOW_CLIENT_SERVER_SYNC=False.')
+
         spec    = request.data
         chunks  = self.store_model.export_chunks(spec)
         payload = [
@@ -122,6 +130,10 @@ class TimeseriesChunkStoreSyncClient:
             retry_max_tries: number of retry attemps
             retry_max_time: retry time in seconds
         """
+        if not store_model.ALLOW_CLIENT_SERVER_SYNC:
+            raise ValueError(f'Trying to use TimeseriesChunkStoreSyncClient with model {store_model.__name__} '
+                             f'while ALLOW_CLIENT_SERVER_SYNC=False.')
+
         self.endpoint = endpoint.rstrip("/")
         self.store_model    = store_model
         self._retry_tries = retry_max_tries
@@ -145,7 +157,7 @@ class TimeseriesChunkStoreSyncClient:
         for d in to_delete:
             self.store_model.objects.filter(
                 **d["attrs"], chunk_index=d["chunk_index"]
-            ).delete()
+            ).delete(keep_tracking=True)  # do not track deleted objects client side
 
         # téléchargement / import
         for i in range(0, len(to_fetch), batch):
@@ -156,6 +168,7 @@ class TimeseriesChunkStoreSyncClient:
                 for item in pack
             ]
             self.store_model.import_chunks(tuples)
+        return len(to_fetch), len(to_delete)
 
     # ----------- requête HTTP avec back-off paramétrable --------------
     def _get(self, url: str, **kwargs):

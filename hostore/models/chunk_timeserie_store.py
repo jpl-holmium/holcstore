@@ -5,11 +5,13 @@ from hashlib import blake2b
 from typing import Union, List
 
 import pytz
+from django.core.exceptions import ImproperlyConfigured
 from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
 from django.db.models import QuerySet
+from django.db.models.base import ModelBase
 from django.db.models.signals import class_prepared
 from django.dispatch import receiver
 from pytz.exceptions import UnknownTimeZoneError
@@ -20,22 +22,162 @@ logger = logging.getLogger(__name__)
 # KEYS_ABSTRACT_CLASS = set([field.name for field in TimeseriesChunkStore._meta.get_fields()])
 # KEYS_ABSTRACT_CLASS.add('id')
 KEYS_ABSTRACT_CLASS = {'id', 'start_ts', 'data', 'dtype', 'updated_at', 'is_deleted', 'chunk_index'}
-EMPTY_DATA = lz4.compress(np.array([]))
+FROZEN_ATTRS = ('CHUNK_AXIS', 'STORE_TZ', 'STORE_FREQ', 'ALLOW_CLIENT_SERVER_SYNC')
 
+EMPTY_DATA = lz4.compress(np.array([]))
+PG_MAX_NAME = 63
 
 class ChunkQuerySet(models.QuerySet):
     """Remplace l'effacement physique par un soft-delete."""
-    def delete(self, **kwargs):
-        hard_delete = kwargs.pop('hard_delete', False)
-        if hard_delete:
+    def delete(self, keep_tracking=False, _disable_sync_safety=False):
+        """
+        Overridden delete method that handles the tracking of deleted object.
+
+        Raises a ValueError if the user is trying to delete objects with ALLOW_CLIENT_SERVER_SYNC=True and
+        keep_tracking=False
+
+        Args:
+            keep_tracking:
+            _disable_sync_safety: should not be used by user. Disable consistency check between
+            ALLOW_CLIENT_SERVER_SYNC and keep_tracking=False
+        """
+        if not keep_tracking:
+            if self.model.ALLOW_CLIENT_SERVER_SYNC and not _disable_sync_safety:
+                raise ValueError(f'Trying to delete {self.model.__name__} objects with ALLOW_CLIENT_SERVER_SYNC=True and '
+                                 f'keep_tracking=False. This would lead to inconsistencies in client store.')
             super().delete()
         else:
             return super().update(is_deleted=True, data=EMPTY_DATA,
                                   updated_at=_localised_now(timezone_name='UTC'),
                                   )
 
+def _meta_name(model, suffix: str, *, max_len: int = 30) -> str:
+    """
+    Return a unique, deterministic index name that satisfies common RDBMS
+    length limits (≤ *max_len* chars, default 30).
 
-class TimeseriesChunkStore(models.Model):
+    • Base pattern   "<db_table>_<suffix>"
+    • If too long   keep the *prefix* (first part) and append a 4-hex digest
+                    so the name stays human-readable **and** unique.
+
+    Example
+    -------
+    >>> _meta_name(MyModel, "axis")
+    'app_mymodel_axis_ab12'
+    """
+    base = f"{model._meta.db_table}_{suffix}"
+    if len(base) <= max_len:
+        return base
+
+    # Reserve 5 chars (“_” + 4-char hash) for the uniqueness suffix
+    prefix = base[: max_len - 5]
+    digest = blake2b(base.encode(), digest_size=2).hexdigest()  # 4 hex chars
+    return f"{prefix}_{digest}"
+
+def _tbl_name(app_label: str, model_name: str, sig: str,
+              *, max_len: int = PG_MAX_NAME) -> str:
+    """
+    Renvoie un nom de table <= *max_len*.
+    • Patron de base : "<app>_<model>__<signature>"
+    • Si trop long  : tronque le préfixe et ajoute un digest sur 8 hex.
+    """
+    base = f"{app_label}_{model_name.lower()}__{sig}"
+    if len(base) <= max_len:
+        return base
+
+    # Réserver 9 car. pour "_" + digest(8 hex)
+    digest = blake2b(base.encode(), digest_size=4).hexdigest()  # 8 hex
+    prefix = base[: max_len - 9]
+    return f"{prefix}_{digest}"
+
+
+class _TCSMeta(ModelBase):
+    """
+    Métaclasse injectée dans `TimeseriesChunkStore`.
+
+    • Ajoute automatiquement aux sous-classes NON abstraites :
+        - UniqueConstraint  (*business_keys, 'chunk_index')
+        - Index 'axis'     sur (*business_keys, 'chunk_index')
+        - Index 'upd'      sur updated_at
+        - Un nom qui fige les propriétés de classe
+    """
+
+    def __new__(mcls, name, bases, attrs, **kwargs):
+        new_cls = super().__new__(mcls, name, bases, attrs, **kwargs)
+
+        # On ignore la classe abstraite
+        if new_cls._meta.abstract:
+            return new_cls
+
+        meta = new_cls._meta         # raccourci
+        # 1 : UniqueConstraint + indexes
+        # 1.1. Keys déclarées par l’utilisateur (hors champs internes)
+        business_keys = [
+            f.name for f in meta.local_fields          # uniquement ceux ajoutés dans le modèle concret
+            if not f.auto_created and f.name not in KEYS_ABSTRACT_CLASS
+        ]
+        business_keys.sort()
+        axis_keys = (*business_keys, "chunk_index")
+
+        # 1.2. UniqueConstraint
+        meta.constraints.append(
+            models.UniqueConstraint(fields=list(axis_keys), name=_meta_name(new_cls, 'unq'))
+        )
+        meta.original_attrs["constraints"] = meta.constraints
+
+        # 1.3. INDEXES
+        def _has_index(fields) -> bool:
+            return any(set(idx.fields) == set(fields) for idx in meta.indexes)
+
+        required = [
+            (axis_keys,        "axis"),
+            (("updated_at",),  "upd"),
+        ]
+        for fields, tag in required:
+            if not _has_index(fields):
+                meta.indexes.append(
+                    models.Index(fields=list(fields), name=_meta_name(new_cls, tag))
+                )
+
+        # idem pour le détecteur de migrations
+        meta.original_attrs["indexes"] = meta.indexes
+
+        # 2 : table signature with class properties
+        # 2.1. Construire la signature immuable
+        sig = "_".join([
+            "ca" + "_".join(new_cls.CHUNK_AXIS),   # ex. cxyear_month
+            "f" + new_cls.STORE_FREQ,          # ex. freq1h
+            "tz" + new_cls.STORE_TZ.replace('/', '_'),  # ex. tzEurope_Paris
+            "sync" if new_cls.ALLOW_CLIENT_SERVER_SYNC else "nosync",
+        ])
+
+        # 2.2. Nom de table par défaut : <app>_<model>__<signature>
+        default_table = _tbl_name(meta.app_label, name, sig)
+
+        # 2.3. Détecter si l’utilisateur a déjà fixé db_table
+        # -----------------------------------------------
+        default_django_table = f"{meta.app_label}_{name.lower()}"
+
+        if meta.db_table == default_django_table:
+            meta.db_table = default_table
+            meta.original_attrs["db_table"] = default_table
+        else:
+            # Vérif cohérence si db_table a été fourni
+            if sig not in meta.db_table:
+                raise ImproperlyConfigured(
+                    f"`db_table` ({meta.db_table}) ne reflète pas la config "
+                    f"immuable ({sig})."
+                )
+        return new_cls
+
+    def __setattr__(cls, name, value):
+        """ block setting any of _FROZEN_ATTRS """
+        if name in FROZEN_ATTRS and hasattr(cls, name):
+            raise AttributeError(f"{name} est immuable après la 1ʳᵉ migration.")
+        super().__setattr__(name, value)
+
+
+class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     # Partitionnement temporel (null si pas de chunk)
     chunk_index = models.IntegerField()
 
@@ -53,12 +195,13 @@ class TimeseriesChunkStore(models.Model):
     CHUNK_AXIS = ('year', 'month')   # Chunking axis for timeseries storage. Configs : ('year',) / ('year', 'month')
     STORE_TZ   = 'Europe/Paris' # Chunking timezone
     STORE_FREQ   = '1h' # Timeseries storage frequency.
+    ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
 
     _model_keys = None
+    _model_td = None
     objects = ChunkQuerySet.as_manager()
 
     class Meta:
-        unique_together = ['chunk_index']
         abstract = True
 
     @classmethod
@@ -67,6 +210,12 @@ class TimeseriesChunkStore(models.Model):
         if cls._model_keys is None:
             cls._model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
         return cls._model_keys
+
+    @classmethod
+    def _get_model_timedelta(cls) -> pd.Timedelta:
+        if cls._model_td is None:
+            cls._model_td = pd.to_timedelta(cls.STORE_FREQ)
+        return cls._model_td
 
     # valeurs de chunk autorisées
     def __init_subclass__(cls, **kwargs):
@@ -103,7 +252,7 @@ class TimeseriesChunkStore(models.Model):
         return lz4.compress(arr.tobytes()), arr
 
     @classmethod
-    def _decompress(cls, row, mem_view=False) -> pd.Series:
+    def _decompress(cls, row, mem_view=False, return_light=False) -> pd.Series:
         blob = row.data
         dtype = row.dtype
         if mem_view:
@@ -112,8 +261,13 @@ class TimeseriesChunkStore(models.Model):
         else:
             raw = lz4.decompress(blob)
             arr = np.frombuffer(raw, dtype=dtype)
-        idx = cls._rebuild_index(row, len(arr))
-        return pd.Series(arr, index=idx)
+
+        if return_light:
+            idx_min, idx_max = cls._bound_index(row, len(arr))
+            return idx_min, idx_max, arr
+        else:
+            idx = cls._rebuild_index(row, len(arr))
+            return pd.Series(arr, index=idx)
 
     # ------------------------------------------------------------------
     # PUBLIC METHODS
@@ -167,6 +321,11 @@ class TimeseriesChunkStore(models.Model):
         """
         if update and replace:
             raise ValueError('update and replace are mutually exclusive')
+
+        if (not update) and (not replace) and cls.ALLOW_CLIENT_SERVER_SYNC:
+            raise ValueError(f'Trying to use set_ts with model {cls.__name__} '
+                             f'without update or replace option while ALLOW_CLIENT_SERVER_SYNC=True.')
+
         cls._ensure_all_attrs_specified(attrs)
         serie = cls._normalize_index(serie)
         if serie is None:
@@ -191,11 +350,12 @@ class TimeseriesChunkStore(models.Model):
                 **attrs,
             )
             # hard delete part of the serie within existing chunks index : will be replaced in _bulk_create
+            # _disable_sync_safety to avoid check raise
             qd_attrs.filter(
                 chunk_index__in=chunk_index_replaced
-            ).delete(hard_delete=True)
+            ).delete(keep_tracking=False, _disable_sync_safety=True)
             # soft delete other chunks : keep trace of deletion
-            qd_attrs.delete()
+            qd_attrs.delete(keep_tracking=True)
 
         if not update:
             cls._bulk_create(rows, bulk_create_batch_size)
@@ -258,6 +418,10 @@ class TimeseriesChunkStore(models.Model):
 
         Returns:
         """
+        if cls.ALLOW_CLIENT_SERVER_SYNC:
+            raise ValueError(f'Trying to use set_many_ts with model {cls.__name__} '
+                             f'while ALLOW_CLIENT_SERVER_SYNC=True.')
+
         rows = []
         for ktuple, serie in mapping.items():
             attrs = dict(zip(keys, ktuple))
@@ -296,16 +460,23 @@ class TimeseriesChunkStore(models.Model):
             qs = cls._filter_interval(qs, start, end)
 
         current_values = None
-        buffer = []
-
+        buffer_data = []
+        min_idx, max_idx = None, None
         def flush():
-            if not buffer:
+            if not buffer_data:
                 return
-            serie = pd.concat(buffer)
+
+            serie = pd.Series(
+                index=pd.date_range(start=min_idx, end=max_idx, inclusive='both', freq=cls.STORE_FREQ),
+                data=np.concatenate(buffer_data)
+            )
             serie = cls._slice_serie(serie, start, end)
             key_dict = dict(zip(cls.get_model_keys(), current_values))
             yield serie, key_dict
-            buffer.clear()
+            # fixme ? done outside to be allowed to erase _idx
+            # buffer_data.clear()
+            # min_idx = None
+            # max_idx = None
 
         for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
             values = tuple(getattr(row, k) for k in cls.get_model_keys())
@@ -314,8 +485,15 @@ class TimeseriesChunkStore(models.Model):
             elif values != current_values:
                 # nouvelle combinaison → on émet la série courante
                 yield from flush()
+                buffer_data.clear()
+                min_idx = None
+                max_idx = None
+
                 current_values = values
-            buffer.append(cls._decompress(row))
+            _idx_min, _idx_max, data = cls._decompress(row, return_light=True)
+            min_idx = min(min_idx, _idx_min) if min_idx else _idx_min
+            max_idx = max(max_idx, _idx_max) if max_idx else _idx_max
+            buffer_data.append(data)
 
         # flush final
         yield from flush()
@@ -509,6 +687,12 @@ class TimeseriesChunkStore(models.Model):
             )
 
     @classmethod
+    def _bound_index(cls, row, length: int):
+        min_idx = pd.Timestamp(row.start_ts).tz_convert(cls.STORE_TZ)
+        max_idx = min_idx + (length - 1) * cls._get_model_timedelta()
+        return min_idx, max_idx
+
+    @classmethod
     def _rebuild_index(cls, row, length: int):
         return cls._cached_index(row.start_ts, length)
 
@@ -561,58 +745,10 @@ class TimeseriesChunkStore(models.Model):
             serie = serie.loc[:end]
         return serie
 
-@receiver(class_prepared)
-def _auto_meta_for_chunk_store(sender, **kwargs):
-    """
-    Enrichit automatiquement les sous-classes de TimeseriesChunkStore :
-      • ajoute unique_together = (*business_keys, 'chunk_index')
-      • ajoute un index composite (*business_keys, 'chunk_index')
-      • ajoute un index sur updated_at
-    """
-    # Ne rien faire pour la classe abstraite ou pour des modèles sans champ métier
-    if not issubclass(sender, TimeseriesChunkStore) or sender is TimeseriesChunkStore:
-        return
 
-    # --- business_keys sans passer par get_fields() -----------------
-    # sinon raise a l'init de django
-    local = [f for f in sender._meta.local_fields
-             if not f.auto_created and f.name not in KEYS_ABSTRACT_CLASS]
-    business_keys = tuple(sorted(f.name for f in local))          # ex. ('kind','version')
-
-    # # # ---------- unique_together ------------------------------------
-    sender._meta.unique_together = (tuple([*business_keys, "chunk_index"]), )
-
-    # ---------- indexes --------------------------------------------
-    def _has_index(fields):
-        """True si un index existant porte exactement ces champs (ordre indifférent)."""
-        fld = set(fields)
-        return any(set(idx.fields) == fld for idx in sender._meta.indexes)
-
-    # !! already added from unique_together contraint !!
-    # composite_fields = (*business_keys, 'chunk_index')
-    # if not _has_index(composite_fields):
-    #     sender._meta.indexes.append(models.Index(fields=list(composite_fields)))
-
-    if not _has_index(('updated_at',)):
-        sender._meta.indexes.append(
-            models.Index(
-                fields=['updated_at'],
-                name=_idx_name(sender, 'upd')  # set a name for testing purposes
-            )
-        )
-
-def _idx_name(model, suffix: str) -> str:
-    """
-    Construit un nom d’index unique <= 30 car. : <table>_<suffix>_<hash4>
-    """
-    base  = f"{model._meta.db_table}_{suffix}"
-    if len(base) > 30:
-        short = blake2b(base.encode(), digest_size=15).hexdigest()  # 4 car.
-        base = short[:30]
-    return base
-
-# class TestServerStore(TimeseriesChunkStore):
-#     """Table côté ‘serveur’"""
+# class TestMyTimeseriesChunkStore(TimeseriesChunkStore):
 #     version = models.IntegerField()
-#     kind    = models.CharField(max_length=20)
+#     kind_very_long_name_for_testing_purpose = models.CharField(max_length=50)
+#     CHUNK_AXIS = ('year', 'month')
+
 

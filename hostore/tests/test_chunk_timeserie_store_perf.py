@@ -1,6 +1,8 @@
 # tests/test_timeseries_chunk_store_load.py
 import time
 import itertools as it
+from unittest import skip
+
 import numpy as np
 import pandas as pd
 from django.db import models, connection
@@ -13,18 +15,20 @@ from hostore.models import TimeseriesChunkStore
 # 1)  Deux magasins de test
 # ---------------------------------------------------------------------------
 
-class LoadStoreMonth(TimeseriesChunkStore):
+class LoadStoreMonth15(TimeseriesChunkStore):
     """Chunk (year, month)"""
     version = models.IntegerField()
     kind    = models.CharField(max_length=20)
     CHUNK_AXIS = ("year", "month")
+    STORE_FREQ   = '15min'
 
     class Meta:
         app_label = "ts_inline"
         managed   = True
-        unique_together = ("version", "kind", "chunk_index")
+        constraints = [models.UniqueConstraint(fields=["version", "kind", "chunk_index"], name='hostore_LoadStoreMonth15_unq'), ]
         indexes = [
             models.Index(fields=['version', 'kind', 'chunk_index']),
+            models.Index(fields=['updated_at']),
         ]
 
 class LoadStoreYear(TimeseriesChunkStore):
@@ -36,13 +40,15 @@ class LoadStoreYear(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed   = True
-        unique_together = ("version", "kind", "chunk_index")
-
+        constraints = [models.UniqueConstraint(fields=["version", "kind", "chunk_index"], name='hostore_LoadStoreYear_unq'), ]
+        indexes = [
+            models.Index(fields=['version', 'kind', 'chunk_index']),
+            models.Index(fields=['updated_at']),
+        ]
 
 # ---------------------------------------------------------------------------
 # 2)  Base abstraite « load »
 # ---------------------------------------------------------------------------
-
 class BaseLoadTsStoreTestCase(TransactionTestCase):
     """
     Classe mère pour les tests de charge.
@@ -74,7 +80,7 @@ class BaseLoadTsStoreTestCase(TransactionTestCase):
         np.random.seed(cls.RANDOM_SEED + seed_offset)
         idx = pd.date_range(
             start=start_ts, periods=cls.SERIES_LEN_H,
-            freq="1h", tz=cls.STORE_CLASS.STORE_TZ
+            freq=cls.STORE_CLASS.STORE_FREQ, tz=cls.STORE_CLASS.STORE_TZ
         )
         return pd.Series(np.random.randn(cls.SERIES_LEN_H), index=idx)
 
@@ -101,34 +107,40 @@ class BaseLoadTsStoreTestCase(TransactionTestCase):
         Store.set_many_ts(mapping, keys=("version", "kind"))
         insert_dur = time.perf_counter() - t0
 
-        # 3) Lecture / contrôle
+        # 3) Lecture / contrôle get
         t1 = time.perf_counter()
         for (v, k), src in mapping.items():
             dst = Store.get_ts({"version": v, "kind": k})
             # assert_series_equal(src, dst)
         read_dur = time.perf_counter() - t1
 
+        # 4) Lecture / contrôle yield_many
+        t1 = time.perf_counter()
+        data = Store.yield_many_ts({})
+        data = list(data)
+        read_many_dur = time.perf_counter() - t1
+
         # 4) Affiche un petit récap (pas d’assert stricte : ajustable)
         print(
             # f"\n[LOAD] {self.N_SERIES} séries × {self.SERIES_LEN_H/24}j "
-            f"→ insert {insert_dur:.2f}s, read {read_dur:.2f}s "
+            f"→ insert {insert_dur:.2f}s, read {read_dur:.2f}s, read many {read_many_dur:.2f}s "
             f"({Store.__name__})"
         )
 
-class LoadMonth_200x5Y(BaseLoadTsStoreTestCase):
+@skip
+class LoadMonth_heavy(BaseLoadTsStoreTestCase):
     """
-    ./manage.py test hostore.tests.test_chunk_timeserie_store_perf.LoadMonth_200x5Y
-    100 séries d’un an, chunk mensuel
+    ./manage.py test hostore.tests.test_chunk_timeserie_store_perf.LoadMonth_heavy
     """
     __unittest_skip__ = False
-    STORE_CLASS = LoadStoreMonth
-    N_SERIES    = 200
-    SERIES_LEN_H = 24 * 365 * 5     # 5 an
+    STORE_CLASS = LoadStoreMonth15
+    N_SERIES    = 1000
+    SERIES_LEN_H = 24 * 365 * 3 * 4
 
-class LoadYear_20x5Y(BaseLoadTsStoreTestCase):
+@skip
+class LoadYear_light(BaseLoadTsStoreTestCase):
     """
-    ./manage.py test hostore.tests.test_chunk_timeserie_store_perf.LoadYear_20x5Y
-    20 séries de 5 ans, chunk annuel
+    ./manage.py test hostore.tests.test_chunk_timeserie_store_perf.LoadYear_light
     """
     __unittest_skip__ = False
     STORE_CLASS = LoadStoreYear
