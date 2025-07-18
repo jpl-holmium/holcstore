@@ -25,7 +25,7 @@ class LoadStoreMonth15(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed   = True
-        unique_together = ("version", "kind", "chunk_index")
+        constraints = [models.UniqueConstraint(fields=["version", "kind", "chunk_index"], name='hostore_LoadStoreMonth15_unq'), ]
         indexes = [
             models.Index(fields=['version', 'kind', 'chunk_index']),
             models.Index(fields=['updated_at']),
@@ -40,7 +40,7 @@ class LoadStoreYear(TimeseriesChunkStore):
     class Meta:
         app_label = "ts_inline"
         managed   = True
-        unique_together = ("version", "kind", "chunk_index")
+        constraints = [models.UniqueConstraint(fields=["version", "kind", "chunk_index"], name='hostore_LoadStoreYear_unq'), ]
         indexes = [
             models.Index(fields=['version', 'kind', 'chunk_index']),
             models.Index(fields=['updated_at']),

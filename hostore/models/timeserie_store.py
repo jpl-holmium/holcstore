@@ -18,7 +18,8 @@ class TimeseriesStore(models.Model):
 
     class Meta:
         abstract = True
-        unique_together = ('data', )  # must be customized
+        # must be customized
+        # constraints = [models.UniqueConstraint(fields=['data'], name='%(app_label)s_%(class)_mykey'), ]
         indexes = [models.Index(fields=['data']), ]  # must be customized
 
     @property
@@ -156,4 +157,4 @@ class TestTimeseriesStoreWithAttribute(TimeseriesStore):
     class Meta(TimeseriesStore.Meta):
         abstract = False
         app_label = 'hostore'
-        unique_together = ('year', 'kind')
+        constraints = [models.UniqueConstraint(fields=['year', 'kind'], name='hostore_TestTimeseriesStoreWithAttribute_unq'), ]

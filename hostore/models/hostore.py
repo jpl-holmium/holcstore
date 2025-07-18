@@ -32,7 +32,8 @@ class Store(models.Model):
 
     class Meta:
         abstract = True
-        unique_together = ('prm', 'client_id', 'version')
+        constraints = [models.UniqueConstraint(fields=['prm', 'client_id', 'version'],
+                                               name='%(app_label)s_%(class)s_prm_clientid_version'), ]
         indexes = [models.Index(fields=['prm', 'client_id']), ]
 
     @classmethod
@@ -443,6 +444,5 @@ class TestDataStoreWithAttribute(Store):
     class Meta(Store.Meta):
         abstract = False
         app_label = 'hostore'
-        unique_together = ('prm', 'client_id', 'year', 'created_at')
-
+        constraints = [models.UniqueConstraint(fields=['prm', 'client_id', 'year', 'created_at'], name='hostore_TestDataStoreWithAttribute_unq'), ]
 

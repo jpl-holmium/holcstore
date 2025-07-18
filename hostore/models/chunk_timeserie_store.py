@@ -51,18 +51,18 @@ class ChunkQuerySet(models.QuerySet):
                                   updated_at=_localised_now(timezone_name='UTC'),
                                   )
 
-def _idx_name(model, suffix: str, *, max_len: int = 30) -> str:
+def _meta_name(model, suffix: str, *, max_len: int = 30) -> str:
     """
     Return a unique, deterministic index name that satisfies common RDBMS
     length limits (≤ *max_len* chars, default 30).
 
-    • Base pattern    "<db_table>_<suffix>"
-    • If too long →   keep the *prefix* (first part) and append a 4-hex digest
-                      so the name stays human-readable **and** unique.
+    • Base pattern   "<db_table>_<suffix>"
+    • If too long   keep the *prefix* (first part) and append a 4-hex digest
+                    so the name stays human-readable **and** unique.
 
     Example
     -------
-    >>> _idx_name(MyModel, "axis")
+    >>> _meta_name(MyModel, "axis")
     'app_mymodel_axis_ab12'
     """
     base = f"{model._meta.db_table}_{suffix}"
@@ -96,9 +96,10 @@ class _TCSMeta(ModelBase):
     Métaclasse injectée dans `TimeseriesChunkStore`.
 
     • Ajoute automatiquement aux sous-classes NON abstraites :
-        - unique_together = (*business_keys, 'chunk_index')
+        - UniqueConstraint  (*business_keys, 'chunk_index')
         - Index 'axis'     sur (*business_keys, 'chunk_index')
         - Index 'upd'      sur updated_at
+        - Un nom qui fige les propriétés de classe
     """
 
     def __new__(mcls, name, bases, attrs, **kwargs):
@@ -109,7 +110,7 @@ class _TCSMeta(ModelBase):
             return new_cls
 
         meta = new_cls._meta         # raccourci
-        # 1 : unique_together + indexes
+        # 1 : UniqueConstraint + indexes
         # 1.1. Keys déclarées par l’utilisateur (hors champs internes)
         business_keys = [
             f.name for f in meta.local_fields          # uniquement ceux ajoutés dans le modèle concret
@@ -118,9 +119,11 @@ class _TCSMeta(ModelBase):
         business_keys.sort()
         axis_keys = (*business_keys, "chunk_index")
 
-        # 1.2. UNIQUE_TOGETHER
-        meta.unique_together = (axis_keys,)
-        meta.original_attrs["unique_together"] = meta.unique_together
+        # 1.2. UniqueConstraint
+        meta.constraints.append(
+            models.UniqueConstraint(fields=list(axis_keys), name=_meta_name(new_cls, 'unq'))
+        )
+        meta.original_attrs["constraints"] = meta.constraints
 
         # 1.3. INDEXES
         def _has_index(fields) -> bool:
@@ -133,7 +136,7 @@ class _TCSMeta(ModelBase):
         for fields, tag in required:
             if not _has_index(fields):
                 meta.indexes.append(
-                    models.Index(fields=list(fields), name=_idx_name(new_cls, tag))
+                    models.Index(fields=list(fields), name=_meta_name(new_cls, tag))
                 )
 
         # idem pour le détecteur de migrations
