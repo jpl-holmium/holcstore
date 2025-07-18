@@ -1,3 +1,9 @@
+### v0.5.3a - 2025-07-18
+- Fixed migration auto constraint and indexes
+- Safe API to avoid data corruption with sync tools
+- Perf optim
+- Removed test models
+
 ### v0.5.2 - 2025-07-15
 - Fixed issue with client sync + replace of existing serie
 - Fixed django setup issue
