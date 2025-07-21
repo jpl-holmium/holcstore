@@ -231,6 +231,7 @@ MyChunkedStore.set_many_ts(
 
 # Yield many
 series_generator = MyChunkedStore.yield_many_ts({"version": 5})  # contains the 2 (serie, key_dict) from mapping
+max_horodate = MyChunkedStore.get_max_horodate({"version": 5})  # maximum horodate of the 2 (serie, key_dict) from mapping
 
 # CANNOT set many over existing
 MyChunkedStore.set_many_ts(mapping, keys=("version", "kind"))  # FAIL : at least one value from mapping already exists

@@ -1,4 +1,5 @@
 ### v0.5.3a - 2025-07-18
+- Added method get_max_horodate
 - Fixed migration auto constraint and indexes
 - Safe API to avoid data corruption with sync tools
 - Perf optim
