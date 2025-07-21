@@ -10,7 +10,7 @@ from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
-from django.db.models import QuerySet
+from django.db.models import QuerySet, Max
 from django.db.models.base import ModelBase
 from django.db.models.signals import class_prepared
 from django.dispatch import receiver
@@ -252,7 +252,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return lz4.compress(arr.tobytes()), arr
 
     @classmethod
-    def _decompress(cls, row, mem_view=False, return_light=False) -> pd.Series:
+    def _decompress(cls, row, mem_view=False, return_mode=None) -> pd.Series:
         blob = row.data
         dtype = row.dtype
         if mem_view:
@@ -262,9 +262,15 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             raw = lz4.decompress(blob)
             arr = np.frombuffer(raw, dtype=dtype)
 
-        if return_light:
+        if return_mode=='light':
             idx_min, idx_max = cls._bound_index(row, len(arr))
             return idx_min, idx_max, arr
+        elif return_mode=='max_idx':
+            non_nan_indices = np.where(~np.isnan(arr))[0]
+            index_max_non_nan = non_nan_indices[-1] if non_nan_indices.size > 0 else 0
+
+            max_horodate = pd.Timestamp(row.start_ts).tz_convert(cls.STORE_TZ) + index_max_non_nan  * cls._get_model_timedelta()
+            return max_horodate
         else:
             idx = cls._rebuild_index(row, len(arr))
             return pd.Series(arr, index=idx)
@@ -490,13 +496,37 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                 max_idx = None
 
                 current_values = values
-            _idx_min, _idx_max, data = cls._decompress(row, return_light=True)
+            _idx_min, _idx_max, data = cls._decompress(row, return_mode='light')
             min_idx = min(min_idx, _idx_min) if min_idx else _idx_min
             max_idx = max(max_idx, _idx_max) if max_idx else _idx_max
             buffer_data.append(data)
 
         # flush final
         yield from flush()
+
+    @classmethod
+    def get_max_horodate(cls, attrs: dict, qs_iterator_chunk_size=200):
+        """
+        Get maximum horodate of timeseries with filters matching attrs.
+
+        Args:
+            attrs: filters of query
+        """
+        # On valide seulement les clés fournies
+        bad = set(attrs) - cls.get_model_keys()
+        if bad:
+            raise ValueError(f"Unknown attribute(s) {bad}")
+
+        qs = cls.objects.filter(**attrs, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
+        max_qs_chunk_index = qs.aggregate(max_chunk=Max('chunk_index'))['max_chunk']
+        qs = qs.filter(chunk_index=max_qs_chunk_index)
+        current_values = None
+        max_idxs = []
+        for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
+            # max de la série actuelle
+            max_idxs.append(cls._decompress(row, return_mode='max_idx'))
+
+        return max(max_idxs) if max_idxs else None
 
     # ------------------------------------------------------------------
     #  SYNC CLIENT ⇆ SERVER

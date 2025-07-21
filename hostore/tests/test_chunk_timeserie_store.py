@@ -126,11 +126,14 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
 
         # serie_a + serie_b
         if not self.no_user_fields:
-            serie_b = self.make_series("2020-01-01", 24 * 365)
+            serie_b = self.make_series("2020-01-01", 24 * 345)
             attrs = self.make_attrs({"version": 1, "kind_very_long_name_for_testing_purpose": "B"})
             self.test_table.set_ts(attrs, serie_b)
             got = self.test_table.get_ts(attrs)
             assert_series_equal(got, serie_b)
+
+            self.assertEqual(self.test_table.get_max_horodate({"version": 1}).isoformat(),
+                             serie_a[serie_a.notna()].index.max().tz_convert(self.test_table.STORE_TZ).isoformat())
 
         # try re set other
         serie_c = self.make_series("2020-01-01", 24 * 365)
@@ -161,6 +164,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
         self.test_table.set_ts(attrs, serie)
         got = self.test_table.get_ts(attrs)
         self.assertEqual(got, None)
+        self.assertEqual(self.test_table.get_max_horodate(attrs), None)
 
     def test_range_filter(self):
         serie = self.make_series("2019-01-01", 24 * 365)
@@ -204,10 +208,17 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
 
         self.test_table.set_ts(attrs, s1)
         assert_series_equal(self.test_table.get_ts(attrs), s1)
+        horomax = s1[s1.notna()].index.max().tz_convert(self.test_table.STORE_TZ)
+        self.assertEqual(self.test_table.get_max_horodate(attrs).isoformat(),
+                         horomax.isoformat())
 
         self.test_table.set_ts(attrs, s2, update=True)
         assert_series_equal(self.test_table.get_ts(attrs), ts_combine_first([s2, s1]))
-
+        self.assertEqual(self.test_table.get_max_horodate(attrs).isoformat(),
+                         max(
+                             horomax,
+                             s2[s2.notna()].index.max().tz_convert(self.test_table.STORE_TZ)
+                         ).isoformat())
         self.test_table.set_ts(attrs, s3, replace=True)
         assert_series_equal(self.test_table.get_ts(attrs), s3)
 
