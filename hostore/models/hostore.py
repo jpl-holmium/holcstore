@@ -423,10 +423,9 @@ class Store(models.Model):
             None
         """
         if custom_filters is None:
-            custom_filters = {}
-            qs = cls.objects.filter(**custom_filters)
-        else:
             qs = cls.objects.all()
+        else:
+            qs = cls.objects.filter(**custom_filters)
         if client_id is not None:
             qs.filter(client_id=client_id).delete()
         else:
