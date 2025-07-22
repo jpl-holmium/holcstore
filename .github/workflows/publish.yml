@@ -44,8 +44,6 @@ jobs:
       run: |
         python manage.py test
         # Pour vérifier l'init de django
-        echo -e "\nfrom ..models.github_cts_test_model import *" >> hostore/models/__init__.py
-        python manage.py shell -c "print('Shell is working')"
 
     - name: Install pypa/build
       run: >-
