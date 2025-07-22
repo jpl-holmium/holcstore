@@ -19,7 +19,7 @@ class TimeseriesStore(models.Model):
     class Meta:
         abstract = True
         # must be customized
-        constraints = [models.UniqueConstraint(fields=['data'], name='%(app_label)s_%(class)_mykey'), ]
+        constraints = [models.UniqueConstraint(fields=['data'], name='%(app_label)s_%(class)s_data_orig_ctn'), ]
         indexes = [models.Index(fields=['data']), ]  # must be customized
 
     @property
