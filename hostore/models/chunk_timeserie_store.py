@@ -443,25 +443,23 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         cls._bulk_create(rows, bulk_create_batch_size)
 
     @classmethod
-    def yield_many_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None,
+    def yield_many_ts(cls, filters: dict, start: pd.Timestamp=None, end: pd.Timestamp=None,
                       qs_iterator_chunk_size=200):
         """
-        Yield (serie, attrs_dict) for each available timeseries with filters matching attrs.
+        Yield (serie, filters_dict) for each available timeseries with filters matching filters.
             - serie will be expressed at STORE_FREQ, STORE_TZ
             - attrs_dict : mapping {model_key: value}
 
         Args:
-            attrs: filters of query
+            filters: filters of query
             start: start index of timeseries
             end: end index of timeseries
             qs_iterator_chunk_size: size of queryset batch
         """
         # On valide seulement les clés fournies
-        bad = set(attrs) - cls.get_model_keys()
-        if bad:
-            raise ValueError(f"Unknown attribute(s) {bad}")
+        cls._check_attrs(filters)
 
-        qs = cls.objects.filter(**attrs, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
+        qs = cls.objects.filter(**filters, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
         if start or end:
             qs = cls._filter_interval(qs, start, end)
 
@@ -505,19 +503,17 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         yield from flush()
 
     @classmethod
-    def get_max_horodate(cls, attrs: dict, qs_iterator_chunk_size=200):
+    def get_max_horodate(cls, filters: dict, qs_iterator_chunk_size=200):
         """
-        Get maximum horodate of timeseries with filters matching attrs.
+        Get maximum horodate of timeseries with filters matching filters.
 
         Args:
-            attrs: filters of query
+            filters: filters of query
         """
         # On valide seulement les clés fournies
-        bad = set(attrs) - cls.get_model_keys()
-        if bad:
-            raise ValueError(f"Unknown attribute(s) {bad}")
+        cls._check_attrs(filters)
 
-        qs = cls.objects.filter(**attrs, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
+        qs = cls.objects.filter(**filters, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
         max_qs_chunk_index = qs.aggregate(max_chunk=Max('chunk_index'))['max_chunk']
         qs = qs.filter(chunk_index=max_qs_chunk_index)
         current_values = None
@@ -774,6 +770,18 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         elif end:
             serie = serie.loc[:end]
         return serie
+
+    @classmethod
+    def _check_attrs(cls, attrs):
+        fields_required = []
+        for k in attrs.keys():
+            if '__' in k:
+                k = k.split('__')[0]
+            fields_required.append(k)
+
+        bad = set(fields_required) - cls.get_model_keys()
+        if bad:
+            raise ValueError(f"Unknown attribute(s) {bad}")
 
 
 # class TestMyTimeseriesChunkStore(TimeseriesChunkStore):
