@@ -5,6 +5,7 @@
 - Perf optim
 - Removed test models
 - fix clear_all logic for Store
+- admin actions to download timeseries
 
 ### v0.5.2 - 2025-07-15
 - Fixed issue with client sync + replace of existing serie
