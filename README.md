@@ -109,11 +109,11 @@ if not datas:
     my_timeserie = datas[0]['data']
     last_updated = datas[0]['last_modified']
 
-# If you want to retreive all versions 
+# If you want to retrieve all versions 
 datas = YourStore.get_lc(key, client_id, combined_versions=False)
 # datas contains all timeseries linked to key
 
-# If you want to retreive a specific version
+# If you want to retrieve a specific version
 datas = YourStore.get_lc(key, client_id, version=1)
 ```
 
@@ -151,6 +151,13 @@ ds_ts = MyTimeseriesStore.get_ts(ts_attrs, flat=True)
 # get timeseries from db if multiple match
 datas = MyTimeseriesStore.get_ts(ts_attrs)
 ds_ts1 = datas[0]['data']
+
+# admin.py
+class MyTimeseriesStoreAdmin(admin.ModelAdmin):
+  from hostore.admin_actions import download_timeseries_from_store, download_timeseries_from_chunkstore
+    resource_classes = [MyTimeseriesStore]
+    actions = [download_timeseries_from_store]
+    
 ```
 
 # Basic usage: TimeseriesChunkStore class
@@ -268,6 +275,16 @@ client = TimeseriesChunkStoreSyncClient(
 client.pull(batch=100)      # fetch new / updated chunks limiting one batch request to 100 items
 ```
 
+#### 3.3/ Use admin features
+This allows you to download a zip file containing all the time series chunk selected
+```python
+# admin.py
+@admin.register(MyChunkedStore)
+class MyChunkedStoreAdmin(admin.ModelAdmin):
+  from hostore.admin_actions import download_timeseries_from_chunkstore
+    resource_classes = [MyChunkedStore]
+    actions = [download_timeseries_from_chunkstore]
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

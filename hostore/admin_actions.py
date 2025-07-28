@@ -79,3 +79,46 @@ def download_timeseries_from_store(modeladmin, request, queryset):
     response['Content-Disposition'] = f'attachment; filename="{output_file}"'
 
     return response
+
+@admin.action(description="Download selected timeseries chunks")
+def download_timeseries_from_chunkstore(modeladmin, request, queryset):
+    holc_ts_qs = queryset.all()
+    if not holc_ts_qs.exists():
+        modeladmin.message_user(
+            request,
+            gettext("Please select at least one object"),
+            messages.WARNING,
+        )
+        return
+
+    datas = []
+    ts_obj = None
+    for ts_obj in holc_ts_qs:
+        obj_content = vars(ts_obj)
+        ds = ts_obj.__class__._decompress(ts_obj)
+        obj_content.pop("data")
+        obj_content.pop("id", None)
+        obj_content = {k: v for k, v in obj_content.items() if k[0] != "_"}
+        datas.append((ds, obj_content))
+
+    exp = CompressedExport()
+    summary_data = []
+    for ii, (ds, obj_content) in enumerate(datas):
+        filename = f"export_serie_{ii}.csv"
+        df = ds.to_frame(name="data")
+        exp.append_df_attach(df, filename)
+        summary_data.append({"filename": filename, **obj_content})
+
+    df_summary = pd.DataFrame(summary_data)
+    exp.append_df_attach(df_summary, "content_summary.csv")
+
+    zip_buffer = exp.make_zip_binary()
+
+    model_name_exported = ts_obj.__class__.__name__
+    output_file = (
+        f"export_{len(datas)}_{model_name_exported}_{dt.datetime.utcnow().isoformat()}.zip"
+    )
+    response = HttpResponse(zip_buffer, content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="{output_file}"'
+
+    return response
