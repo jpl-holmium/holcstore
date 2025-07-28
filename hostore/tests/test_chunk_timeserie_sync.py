@@ -68,8 +68,8 @@ class SyncIntegrationTestCase(TransactionTestCase):
     def _sync(self, filters=None):
         with (
             patch.object(requests, "get",  self.req_client.get),
-            patch.object(requests, "post", self.req_client.post),
-            patch.object(requests, "put",  self.req_client.put),
+            # patch.object(requests, "post", self.req_client.post),
+            # patch.object(requests, "put",  self.req_client.put),
         ):
             return self.sync_client.pull(batch=20, filters=filters)
 

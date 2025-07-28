@@ -26,7 +26,7 @@ def print_api_exception(view_func):
             if DEBUG:
                 print(f'\nview func {view_func} unexpected error')
                 print(traceback.format_exc())
-
+            raise
     return wrapper
 
 
@@ -38,7 +38,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     End-points
     ──────────
     • GET  /updates/?since=ISO    → list of modified chunks
-    • POST /pack/                 → export requested chunks
+    • GET /pack/                 → export requested chunks
 
     Usage example in your own views.py:
 
@@ -66,7 +66,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
         data  = self.store_model.list_updates(since, filters)
         return Response(data, content_type="application/json")
 
-    # 2) /pack/   POST → export
+    # 2) /pack/   GET → export
     @action(detail=False, methods=["get"])
     @print_api_exception
     def pack(self, request):
