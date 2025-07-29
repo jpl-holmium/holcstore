@@ -121,6 +121,14 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
         attrs = self.make_attrs({"version": 1, "kind_very_long_name_for_testing_purpose": "A"})
         self.test_table.set_ts(attrs, serie_a)
         got = self.test_table.get_ts(attrs)
+
+        # test index metadatas
+        self.assertEqual(str(got.index.tz), self.test_table.STORE_TZ)
+        self.assertIsInstance(got, pd.Series)
+        self.assertIsInstance(got.index, pd.DatetimeIndex)
+        self.assertEqual(got.index.freq, self.test_table.STORE_FREQ)
+
+        # test content
         assert_series_equal(got, serie_a)
         self.assertGreaterEqual(self.test_table.objects.filter(**attrs).count(), self.year_count_expected)
 

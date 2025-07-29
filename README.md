@@ -153,10 +153,10 @@ datas = MyTimeseriesStore.get_ts(ts_attrs)
 ds_ts1 = datas[0]['data']
 
 # admin.py
+@admin.register(MyTimeseriesStore)
 class MyTimeseriesStoreAdmin(admin.ModelAdmin):
-  from hostore.admin_actions import download_timeseries_from_store, download_timeseries_from_chunkstore
-    resource_classes = [MyTimeseriesStore]
-    actions = [download_timeseries_from_store]
+  from hostore.admin_actions import download_timeseries_from_store
+  actions = [download_timeseries_from_store]
     
 ```
 
@@ -282,8 +282,7 @@ This allows you to download a zip file containing all the time series chunk sele
 @admin.register(MyChunkedStore)
 class MyChunkedStoreAdmin(admin.ModelAdmin):
   from hostore.admin_actions import download_timeseries_from_chunkstore
-    resource_classes = [MyChunkedStore]
-    actions = [download_timeseries_from_chunkstore]
+  actions = [download_timeseries_from_chunkstore]
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>

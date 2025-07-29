@@ -1,11 +1,11 @@
-### v0.5.3a - 2025-07-18
+### v0.5.3 - 2025-07-29
 - Added method get_max_horodate
 - Fixed migration auto constraint and indexes
 - Safe API to avoid data corruption with sync tools
 - Perf optim
 - Removed test models
 - fix clear_all logic for Store
-- admin actions to download timeseries
+- admin actions to download timeseries from TimeseriesStore and TimeseriesChunkStore
 
 ### v0.5.2 - 2025-07-15
 - Fixed issue with client sync + replace of existing serie
