@@ -339,19 +339,22 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
         # Enregistrement par chunk
         rows = []
+        chunk_index_replaced: List[int] = []
         for sub in cls._chunk(serie):
             if update:
                 cls._update_chunk_with_existing(attrs, sub)
             else:
-                rows.append(cls._build_row(attrs, sub))
-                if len(rows) >= bulk_create_batch_size:
+                row = cls._build_row(attrs, sub)
+                rows.append(row)
+                if replace:
+                    chunk_index_replaced.append(row.chunk_index)
+                elif len(rows) >= bulk_create_batch_size:
+                    # insertion can be done as we go only when not replacing
                     cls._bulk_create(rows, bulk_create_batch_size)
                     rows = []
 
         if replace:
-            # we need to hard delete previous related chunks (previous serie may lay on a greater span than new one)
-            # only over chunk_index deleted (to allow propagation of deleted index to client store)
-            chunk_index_replaced = [r.chunk_index for r in rows]
+            # deletion must occur before inserting any replacement rows
             qd_attrs = cls.objects.filter(
                 **attrs,
             )

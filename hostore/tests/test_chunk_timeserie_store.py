@@ -297,6 +297,32 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
         with self.assertRaises(ValueError):
             self.test_table.set_ts({"version": 8, "kind_very_long_name_for_testing_purpose": "J"}, bad)
 
+    def test_replace_more_than_one_batch(self):
+        if self.series_na is not None:
+            return
+
+        attrs = self.make_attrs({"version": 9, "kind_very_long_name_for_testing_purpose": "batch"})
+        batch_size = 2
+        if self.test_table.CHUNK_AXIS == ('year',):
+            periods = 24 * 365 * (batch_size + 1)
+        else:
+            periods = 24 * 31 * (batch_size + 1)
+
+        s1 = self.make_series("2020-01-01", periods)
+        s2 = self.make_series("2020-01-01", periods, seed=42)
+        self.test_table.set_ts(attrs, s1)
+        self.test_table.set_ts(attrs, s2, replace=True, bulk_create_batch_size=batch_size)
+
+        got = self.test_table.get_ts(attrs)
+        assert_series_equal(got, s2)
+
+        normalized = self.test_table._normalize_index(s2)
+        expected_chunks = len(list(self.test_table._chunk(normalized)))
+        self.assertEqual(
+            self.test_table.objects.filter(**attrs, is_deleted=False).count(),
+            expected_chunks,
+        )
+
 
 class TestTimeseries_1ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
     """
