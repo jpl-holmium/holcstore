@@ -196,6 +196,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     STORE_TZ   = 'Europe/Paris' # Chunking timezone
     STORE_FREQ   = '1h' # Timeseries storage frequency.
     ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
+    CACHED_INDEX_SIZE = 120  # max size for cached date indexes
 
     _model_keys = None
     _model_td = None
@@ -240,6 +241,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             raise ValueError(
                 f"Invalid STORE_TZ {cls.STORE_TZ!r} for model {cls.__name__}"
             )
+
+        # wrap the index rebuild helper with an LRU cache sized per subclass
+        cls._cached_index = classmethod(
+            lru_cache(maxsize=cls.CACHED_INDEX_SIZE)(cls._cached_index.__func__)
+        )
 
     def delete(self, **kwargs):
         """ Soft-delete : conserve la ligne comme tombstone. """
@@ -585,12 +591,49 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         Client-side helper: ingest the list produced by *export_chunks*.
         Each tuple is ``(blob_lz4, attrs_dict, meta_dict)``.
         """
-        for blob, attrs, meta in payload:
-            cls._ensure_all_attrs_specified(attrs, bonus_keys=['chunk_index'])
-            cls.objects.update_or_create(
-                defaults=dict(data=blob, **meta),
-                **attrs
-            )
+        if not payload:
+            return
+
+        # Pre-compute union of meta fields to update using bulk_update later on
+        meta_fields = set()
+        for _, _, meta in payload:
+            meta_fields.update(meta.keys())
+
+        now = _localised_now(timezone_name="UTC")
+
+        with transaction.atomic():
+            attrs_list = [attrs for _, attrs, _ in payload]
+            q = models.Q()
+            for attrs in attrs_list:
+                cls._ensure_all_attrs_specified(attrs, bonus_keys=["chunk_index"])
+                q |= models.Q(**attrs)
+
+            existing = {}
+            if attrs_list:
+                for row in cls.objects.filter(q):
+                    key = tuple(sorted((f, getattr(row, f)) for f in attrs_list[0].keys()))
+                    existing[key] = row
+
+            rows_to_create = []
+            rows_to_update = []
+            for blob, attrs, meta in payload:
+                key = tuple(sorted(attrs.items()))
+                if key in existing:
+                    row = existing[key]
+                    row.data = blob
+                    row.updated_at = now
+                    for k, v in meta.items():
+                        setattr(row, k, v)
+                    rows_to_update.append(row)
+                else:
+                    obj = cls(**attrs, data=blob, updated_at=now, **meta)
+                    rows_to_create.append(obj)
+
+            if rows_to_create:
+                cls.objects.bulk_create(rows_to_create)
+            if rows_to_update:
+                update_fields = ["data", "updated_at", *meta_fields]
+                cls.objects.bulk_update(rows_to_update, update_fields)
 
     # -- private helpers --
 
@@ -723,7 +766,6 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return cls._cached_index(row.start_ts, length)
 
     @classmethod
-    @lru_cache(maxsize=12*10)
     def _cached_index(cls, start_ts, length):
         return pd.date_range(
             start=pd.Timestamp(start_ts).tz_convert(cls.STORE_TZ),

@@ -195,6 +195,13 @@ class MyChunkedStore(TimeseriesChunkStore):
     STORE_TZ   = 'Europe/Paris' # Chunking timezone (also timeseries output tz)
     STORE_FREQ   = '1h' # Timeseries storage frequency. (the store reindex input series but never resample)
     ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
+    CACHED_INDEX_SIZE = 120  # max number of date indexes kept in cache
+```
+Use `CACHED_INDEX_SIZE` to tune the size of the LRU cache used when rebuilding
+indexes:
+```python
+class MyChunkedStore(TimeseriesChunkStore):
+    CACHED_INDEX_SIZE = 360
 ```
 The Custom fields are **strictly indexation axis** : you **must not** use them to store metadata or redundant data.
 
