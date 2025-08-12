@@ -178,15 +178,15 @@ class TimeseriesChunkStoreSyncClient:
     # ----------- pull depuis le serveur -------------------------------
     def pull(
         self,
-        batch: int = 50,
         filters: dict | None = None,
+        batch: int = 50,
         page_size: int = 200,
     ):
         """Fetch updates from the server in a paginated fashion.
 
         Args:
-            batch: chunk size for `/pack/` requests.
             filters: optional server-side filters.
+            batch: chunk size for `/pack/` requests.
             page_size: number of items to request from `/updates/` per call.
         """
         filters = filters or {}
