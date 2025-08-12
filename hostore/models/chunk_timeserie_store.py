@@ -529,27 +529,50 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     # ------------------------------------------------------------------
 
     @classmethod
-    def list_updates(cls, since: pd.Timestamp, filters: dict = None) -> list[dict]:
-        """
-        Return metadata for every chunk whose ``updated_at`` is strictly
-        greater than *since*.
+    def list_updates(cls, since: pd.Timestamp, filters: dict = None,
+                     limit: int | None = None, offset: int | None = None,
+                     qs_iterator_chunk_size: int = 200) -> list[dict]:
+        """Return metadata for every chunk whose ``updated_at`` is strictly
+        greater than *since* with optional pagination.
 
-        Each dict contains:
+        Args:
+            since: timestamp lower bound (excluded).
+            filters: additional filters on the query.
+            limit: maximum number of items to return.
+            offset: number of items to skip from the beginning.
+            qs_iterator_chunk_size: size of queryset batch for iteration.
+
+        Each dict contains::
             attrs       : full business key dict
             chunk_index : int
             dtype       : str
             start_ts    : dt.datetime
             updated_at  : dt.datetime
+            is_deleted  : bool
         """
-        if filters is None:
-            filters = dict()
-        qs = (cls.objects
-              .filter(**filters, updated_at__gt=since)
-              .values(*cls.get_model_keys(),
-                      "chunk_index", "dtype",
-                      "start_ts", "updated_at", "is_deleted"))
+        filters = filters or {}
+
+        qs = (
+            cls.objects
+            .filter(**filters, updated_at__gt=since)
+            .order_by("updated_at", "pk")
+            .values(
+                *cls.get_model_keys(),
+                "chunk_index",
+                "dtype",
+                "start_ts",
+                "updated_at",
+                "is_deleted",
+            )
+        )
+
+        if offset:
+            qs = qs[offset:]
+        if limit is not None:
+            qs = qs[:limit]
+
         out = []
-        for row in qs:
+        for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
             out.append({
                 "attrs": {k: row[k] for k in cls.get_model_keys()},
                 "chunk_index": row["chunk_index"],

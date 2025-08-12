@@ -59,11 +59,18 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
                              f'while ALLOW_CLIENT_SERVER_SYNC=False.')
 
         since = pd.Timestamp(request.query_params["since"])
+        limit = request.query_params.get("limit")
+        offset = request.query_params.get("offset")
         filters = {
             k: v for k, v in request.query_params.items()
-            if k != "since"
+            if k not in {"since", "limit", "offset"}
         }
-        data  = self.store_model.list_updates(since, filters)
+        data = self.store_model.list_updates(
+            since,
+            filters,
+            limit=int(limit) if limit is not None else None,
+            offset=int(offset) if offset is not None else None,
+        )
         return Response(data, content_type="application/json")
 
     # 2) /pack/   GET → export
@@ -140,35 +147,58 @@ class TimeseriesChunkStoreSyncClient:
         self._retry_time  = retry_max_time
 
     # ----------- pull depuis le serveur -------------------------------
-    def pull(self, batch: int = 50, filters: dict | None = None):
+    def pull(
+        self,
+        batch: int = 50,
+        filters: dict | None = None,
+        page_size: int = 200,
+    ):
+        """Fetch updates from the server in a paginated fashion.
+
+        Args:
+            batch: chunk size for `/pack/` requests.
+            filters: optional server-side filters.
+            page_size: number of items to request from `/updates/` per call.
+        """
         filters = filters or {}
 
         since = self.store_model.last_updated_at()
-        params = {"since": since.isoformat(), **filters}
+        offset = 0
+        total_fetch = total_delete = 0
+        while True:
+            params = {
+                "since": since.isoformat(),
+                "limit": page_size,
+                "offset": offset,
+                **filters,
+            }
+            updates = self._get(f"{self.endpoint}/updates/", params=params)
+            if not updates:
+                break
 
-        updates = self._get(f"{self.endpoint}/updates/", params=params)
+            to_fetch, to_delete = [], []
+            for u in updates:
+                (to_delete if u["is_deleted"] else to_fetch).append(u)
 
-        # split fetch delete
-        to_fetch, to_delete = [], []
-        for u in updates:
-            (to_delete if u["is_deleted"] else to_fetch).append(u)
+            for d in to_delete:
+                self.store_model.objects.filter(
+                    **d["attrs"], chunk_index=d["chunk_index"]
+                ).delete(keep_tracking=True)
 
-        # suppression locale
-        for d in to_delete:
-            self.store_model.objects.filter(
-                **d["attrs"], chunk_index=d["chunk_index"]
-            ).delete(keep_tracking=True)  # do not track deleted objects client side
+            for i in range(0, len(to_fetch), batch):
+                spec = to_fetch[i : i + batch]
+                pack = self._get(f"{self.endpoint}/pack/", json=spec)
+                tuples = [
+                    (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
+                    for item in pack
+                ]
+                self.store_model.import_chunks(tuples)
 
-        # téléchargement / import
-        for i in range(0, len(to_fetch), batch):
-            spec  = updates[i : i + batch]
-            pack  = self._get(f"{self.endpoint}/pack/", json=spec)
-            tuples = [
-                (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
-                for item in pack
-            ]
-            self.store_model.import_chunks(tuples)
-        return len(to_fetch), len(to_delete)
+            total_fetch += len(to_fetch)
+            total_delete += len(to_delete)
+            offset += len(updates)
+
+        return total_fetch, total_delete
 
     # ----------- requête HTTP avec back-off paramétrable --------------
     def _get(self, url: str, **kwargs):
@@ -182,5 +212,5 @@ class TimeseriesChunkStoreSyncClient:
             resp = requests.get(url, **kwargs)
             resp.raise_for_status()
             return resp.json()
-
+        
         return _call()

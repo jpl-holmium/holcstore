@@ -262,6 +262,16 @@ YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(MyChunkStoreServerSide, th
 router.register("ts/myendpoint", YearSync, basename="ts-myendpoint")
 ```
 
+The `/updates/` endpoint supports basic pagination using `limit` and
+`offset` query parameters. For example:
+
+```
+GET /ts/myendpoint/updates/?since=2024-01-01T00:00:00Z&limit=100&offset=200
+```
+
+returns at most 100 updates starting from the 200th item. Results are
+ordered by `updated_at`.
+
 
 #### 3.2/ Define the API (client side : pull new data)
 ```python
@@ -272,8 +282,11 @@ client = TimeseriesChunkStoreSyncClient(
     endpoint="https://api.example.com/ts/myendpoint",
     store_model=MyChunkStoreClientSide,
 )
-client.pull(batch=100)      # fetch new / updated chunks limiting one batch request to 100 items
+client.pull(batch=100, page_size=500)      # fetch new/updated chunks, requesting 500 updates per page
 ```
+
+`TimeseriesChunkStoreSyncClient.pull` automatically iterates over all
+pages until no more updates are returned.
 
 #### 3.3/ Use admin features
 This allows you to download a zip file containing all the time series chunk selected
