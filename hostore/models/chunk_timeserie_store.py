@@ -529,11 +529,37 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     # ------------------------------------------------------------------
 
     @classmethod
-    def list_updates(cls, since: pd.Timestamp, filters: dict = None,
-                     limit: int | None = None, offset: int | None = None,
-                     qs_iterator_chunk_size: int = 200) -> list[dict]:
-        """Return metadata for every chunk whose ``updated_at`` is strictly
-        greater than *since* with optional pagination.
+    def updates_queryset(cls, since: pd.Timestamp, filters: dict | None = None):
+        """Return a queryset of chunks updated strictly after *since*.
+
+        The queryset is ordered by ``updated_at`` and primary key to ensure
+        deterministic pagination.
+        """
+        filters = filters or {}
+        return (
+            cls.objects
+            .filter(**filters, updated_at__gt=since)
+            .order_by("updated_at", "pk")
+            .values(
+                *cls.get_model_keys(),
+                "chunk_index",
+                "dtype",
+                "start_ts",
+                "updated_at",
+                "is_deleted",
+            )
+        )
+
+    @classmethod
+    def list_updates(
+        cls,
+        since: pd.Timestamp,
+        filters: dict | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        qs_iterator_chunk_size: int = 200,
+    ) -> list[dict]:
+        """Convenience helper returning a list from ``updates_queryset``.
 
         Args:
             since: timestamp lower bound (excluded).
@@ -550,22 +576,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             updated_at  : dt.datetime
             is_deleted  : bool
         """
-        filters = filters or {}
-
-        qs = (
-            cls.objects
-            .filter(**filters, updated_at__gt=since)
-            .order_by("updated_at", "pk")
-            .values(
-                *cls.get_model_keys(),
-                "chunk_index",
-                "dtype",
-                "start_ts",
-                "updated_at",
-                "is_deleted",
-            )
-        )
-
+        qs = cls.updates_queryset(since, filters)
         if offset:
             qs = qs[offset:]
         if limit is not None:
