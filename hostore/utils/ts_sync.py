@@ -7,6 +7,7 @@ import requests
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 import base64, pandas as pd
 from typing import Type
@@ -30,7 +31,28 @@ def print_api_exception(view_func):
     return wrapper
 
 
-class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
+class ChunkIteratorPagination(LimitOffsetPagination):
+    """Limit/offset paginator that streams queryset results."""
+
+    def paginate_queryset(self, queryset, request, view=None):
+        self.limit = self.get_limit(request)
+        if self.limit is None:
+            return None
+
+        self.count = self.get_count(queryset)
+        self.request = request
+        self.offset = self.get_offset(request)
+
+        if self.count == 0 or self.offset > self.count:
+            return []
+
+        chunk_size = getattr(view, "qs_iterator_chunk_size", 200)
+        return list(
+            queryset[self.offset : self.offset + self.limit]
+        )
+
+
+class TimeseriesChunkStoreSyncViewSet(viewsets.GenericViewSet):
     """
     Base server-side ViewSet that exposes a REST interface for synchronising
     any TimeseriesChunkStore subclass.
@@ -49,6 +71,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
     """
 
     store_model: Type['TimeseriesChunkStore'] = None
+    pagination_class = ChunkIteratorPagination
 
     # 1) /updates/?since=ISO
     @action(detail=False, methods=["get"])
@@ -60,11 +83,24 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
 
         since = pd.Timestamp(request.query_params["since"])
         filters = {
-            k: v for k, v in request.query_params.items()
-            if k != "since"
+            k: v
+            for k, v in request.query_params.items()
+            if k not in {"since", "limit", "offset"}
         }
-        data  = self.store_model.list_updates(since, filters)
-        return Response(data, content_type="application/json")
+        qs = self.store_model.updates_queryset(since, filters)
+        page = self.paginate_queryset(qs)
+        data = [
+            {
+                "attrs": {k: row[k] for k in self.store_model.get_model_keys()},
+                "chunk_index": row["chunk_index"],
+                "dtype": row["dtype"],
+                "start_ts": row["start_ts"],
+                "updated_at": row["updated_at"],
+                "is_deleted": row["is_deleted"],
+            }
+            for row in page
+        ]
+        return self.get_paginated_response(data)
 
     # 2) /pack/   GET → export
     @action(detail=False, methods=["get"])
@@ -101,7 +137,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.ViewSet):
         )
         router.register("ts/year", YearSync, basename="ts-year")
         """
-        if not hasattr(model, "list_updates"):
+        if not hasattr(model, "updates_queryset"):
             raise TypeError("model must inherit TimeseriesChunkStore")
         attrs = {"store_model": model, **extra_attrs}
         return type(f"{model.__name__}SyncViewSet", (cls,), attrs)
@@ -140,35 +176,56 @@ class TimeseriesChunkStoreSyncClient:
         self._retry_time  = retry_max_time
 
     # ----------- pull depuis le serveur -------------------------------
-    def pull(self, batch: int = 50, filters: dict | None = None):
+    def pull(
+        self,
+        batch: int = 50,
+        filters: dict | None = None,
+        page_size: int = 200,
+    ):
+        """Fetch updates from the server in a paginated fashion.
+
+        Args:
+            batch: chunk size for `/pack/` requests.
+            filters: optional server-side filters.
+            page_size: number of items to request from `/updates/` per call.
+        """
         filters = filters or {}
 
         since = self.store_model.last_updated_at()
-        params = {"since": since.isoformat(), **filters}
+        url = f"{self.endpoint}/updates/"
+        params = {"since": since.isoformat(), "limit": page_size, **filters}
+        total_fetch = total_delete = 0
 
-        updates = self._get(f"{self.endpoint}/updates/", params=params)
+        while url:
+            page = self._get(url, params=params)
+            params = None  # next links already contain query parameters
+            updates = page.get("results", [])
+            if not updates:
+                break
 
-        # split fetch delete
-        to_fetch, to_delete = [], []
-        for u in updates:
-            (to_delete if u["is_deleted"] else to_fetch).append(u)
+            to_fetch, to_delete = [], []
+            for u in updates:
+                (to_delete if u["is_deleted"] else to_fetch).append(u)
 
-        # suppression locale
-        for d in to_delete:
-            self.store_model.objects.filter(
-                **d["attrs"], chunk_index=d["chunk_index"]
-            ).delete(keep_tracking=True)  # do not track deleted objects client side
+            for d in to_delete:
+                self.store_model.objects.filter(
+                    **d["attrs"], chunk_index=d["chunk_index"]
+                ).delete(keep_tracking=True)
 
-        # téléchargement / import
-        for i in range(0, len(to_fetch), batch):
-            spec  = updates[i : i + batch]
-            pack  = self._get(f"{self.endpoint}/pack/", json=spec)
-            tuples = [
-                (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
-                for item in pack
-            ]
-            self.store_model.import_chunks(tuples)
-        return len(to_fetch), len(to_delete)
+            for i in range(0, len(to_fetch), batch):
+                spec = to_fetch[i : i + batch]
+                pack = self._get(f"{self.endpoint}/pack/", json=spec)
+                tuples = [
+                    (base64.b64decode(item["blob"]), item["attrs"], item["meta"])
+                    for item in pack
+                ]
+                self.store_model.import_chunks(tuples)
+
+            total_fetch += len(to_fetch)
+            total_delete += len(to_delete)
+            url = page.get("next")
+
+        return total_fetch, total_delete
 
     # ----------- requête HTTP avec back-off paramétrable --------------
     def _get(self, url: str, **kwargs):
@@ -182,5 +239,5 @@ class TimeseriesChunkStoreSyncClient:
             resp = requests.get(url, **kwargs)
             resp.raise_for_status()
             return resp.json()
-
+        
         return _call()
