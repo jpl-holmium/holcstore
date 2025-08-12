@@ -1,3 +1,7 @@
+### v0.5.4 - 2025-08-12
+- Customize index cache size
+- Optimisation import_chunks (sync)
+
 ### v0.5.3 - 2025-07-29
 - Added method get_max_horodate
 - Fixed migration auto constraint and indexes
