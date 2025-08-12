@@ -196,6 +196,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     STORE_TZ   = 'Europe/Paris' # Chunking timezone
     STORE_FREQ   = '1h' # Timeseries storage frequency.
     ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
+    CACHED_INDEX_SIZE = 120  # max size for cached date indexes
 
     _model_keys = None
     _model_td = None
@@ -240,6 +241,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             raise ValueError(
                 f"Invalid STORE_TZ {cls.STORE_TZ!r} for model {cls.__name__}"
             )
+
+        # wrap the index rebuild helper with an LRU cache sized per subclass
+        cls._cached_index = classmethod(
+            lru_cache(maxsize=cls.CACHED_INDEX_SIZE)(cls._cached_index.__func__)
+        )
 
     def delete(self, **kwargs):
         """ Soft-delete : conserve la ligne comme tombstone. """
@@ -760,7 +766,6 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return cls._cached_index(row.start_ts, length)
 
     @classmethod
-    @lru_cache(maxsize=12*10)
     def _cached_index(cls, start_ts, length):
         return pd.date_range(
             start=pd.Timestamp(start_ts).tz_convert(cls.STORE_TZ),
