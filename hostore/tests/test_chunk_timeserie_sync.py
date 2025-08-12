@@ -71,7 +71,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
             # patch.object(requests, "post", self.req_client.post),
             # patch.object(requests, "put",  self.req_client.put),
         ):
-            return self.sync_client.pull(batch=20, filters=filters)
+            return self.sync_client.pull(batch=20, filters=filters, page_size=4)
 
     # --------------------------------------------------------------
     def test_full_sync_and_update(self):

@@ -170,14 +170,14 @@ querying them through the ORM.
 Main features
 =============
 
-| Feature                                    | Description |
-|--------------------------------------------|-------------|
-| **Chunking**                               | Split each series by `('year',)` or `('year','month')` so blobs stay small. |
-| **Compression**                            | Data saved as LZ4-compressed NumPy buffers; index is rebuilt on the fly. |
-| **Dense layout**                           | Each chunk is re-indexed on a regular grid (`STORE_FREQ`, `STORE_TZ`). |
-| **Smart upsert**                           | `set_ts(..., update=True)` merges with existing data via `combine_first`. |
-| **Bulk helpers**                           | `set_many_ts()` / `yield_many_ts()` for mass insert / streaming read. |
-| **Sync ready**                             | `list_updates`, `export_chunks`, `import_chunks` enable cheap client ↔ server replication. |
+| Feature                                    | Description                                                                                                                    |
+|--------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| **Chunking**                               | Split each series by `('year',)` or `('year','month')` so blobs stay small.                                                    |
+| **Compression**                            | Data saved as LZ4-compressed NumPy buffers; index is rebuilt on the fly.                                                       |
+| **Dense layout**                           | Each chunk is re-indexed on a regular grid (`STORE_FREQ`, `STORE_TZ`).                                                         |
+| **Smart upsert**                           | `set_ts(..., update=True)` merges with existing data via `combine_first`.                                                      |
+| **Bulk helpers**                           | `set_many_ts()` / `yield_many_ts()` for mass insert / streaming read.                                                          |
+| **Sync ready**                             | `updates_queryset`, `list_updates`, `export_chunks`, `import_chunks` enable cheap client ↔ server replication.                 |
 | **REST scaffolding**                       | `TimeseriesChunkStoreSyncViewSet` + `TimeseriesChunkStoreSyncClient` give you plug-and-play API endpoints and a Python client. |
 
 Quick start
@@ -195,6 +195,13 @@ class MyChunkedStore(TimeseriesChunkStore):
     STORE_TZ   = 'Europe/Paris' # Chunking timezone (also timeseries output tz)
     STORE_FREQ   = '1h' # Timeseries storage frequency. (the store reindex input series but never resample)
     ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
+    CACHED_INDEX_SIZE = 120  # max number of date indexes kept in cache
+```
+Use `CACHED_INDEX_SIZE` to tune the size of the LRU cache used when rebuilding
+indexes:
+```python
+class MyChunkedStore(TimeseriesChunkStore):
+    CACHED_INDEX_SIZE = 360
 ```
 The Custom fields are **strictly indexation axis** : you **must not** use them to store metadata or redundant data.
 
@@ -262,6 +269,26 @@ YearSync = TimeseriesChunkStoreSyncViewSet.as_factory(MyChunkStoreServerSide, th
 router.register("ts/myendpoint", YearSync, basename="ts-myendpoint")
 ```
 
+The `/updates/` endpoint uses DRF's limit/offset pagination. Requests can
+specify `limit` and `offset` parameters and responses include standard
+pagination metadata:
+
+```
+GET /ts/myendpoint/updates/?since=2024-01-01T00:00:00Z&limit=100
+
+{
+  "count": 1234,
+  "next": "/ts/myendpoint/updates/?since=2024-01-01T00:00:00Z&limit=100&offset=100",
+  "previous": null,
+  "results": [
+    { "attrs": {"id": 1}, "chunk_index": 0, ... },
+    ...
+  ]
+}
+```
+
+Results are ordered by `updated_at`.
+
 
 #### 3.2/ Define the API (client side : pull new data)
 ```python
@@ -272,8 +299,11 @@ client = TimeseriesChunkStoreSyncClient(
     endpoint="https://api.example.com/ts/myendpoint",
     store_model=MyChunkStoreClientSide,
 )
-client.pull(batch=100)      # fetch new / updated chunks limiting one batch request to 100 items
+client.pull(batch=100, page_size=500)      # fetch new/updated chunks, requesting 500 updates per page
 ```
+
+`TimeseriesChunkStoreSyncClient.pull` follows the `next` links returned by
+the server and continues fetching pages until there are no more results.
 
 #### 3.3/ Use admin features
 This allows you to download a zip file containing all the time series chunk selected

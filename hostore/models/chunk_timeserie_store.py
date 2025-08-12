@@ -196,6 +196,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     STORE_TZ   = 'Europe/Paris' # Chunking timezone
     STORE_FREQ   = '1h' # Timeseries storage frequency.
     ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
+    CACHED_INDEX_SIZE = 120  # max size for cached date indexes
 
     _model_keys = None
     _model_td = None
@@ -240,6 +241,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             raise ValueError(
                 f"Invalid STORE_TZ {cls.STORE_TZ!r} for model {cls.__name__}"
             )
+
+        # wrap the index rebuild helper with an LRU cache sized per subclass
+        cls._cached_index = classmethod(
+            lru_cache(maxsize=cls.CACHED_INDEX_SIZE)(cls._cached_index.__func__)
+        )
 
     def delete(self, **kwargs):
         """ Soft-delete : conserve la ligne comme tombstone. """
@@ -529,25 +535,57 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     # ------------------------------------------------------------------
 
     @classmethod
-    def list_updates(cls, since: pd.Timestamp, filters: dict = None) -> list[dict]:
-        """
-        Return metadata for every chunk whose ``updated_at`` is strictly
-        greater than *since*.
+    def updates_queryset(cls, since: pd.Timestamp, filters: dict | None = None):
+        """Return a queryset of chunks updated strictly after *since*.
 
-        Each dict contains:
+        The queryset is ordered by ``updated_at`` and primary key to ensure
+        deterministic pagination.
+        """
+        filters = filters or {}
+        return (
+            cls.objects
+            .filter(**filters, updated_at__gt=since)
+            .order_by("updated_at", "pk")
+            .values(
+                *cls.get_model_keys(),
+                "chunk_index",
+                "dtype",
+                "start_ts",
+                "updated_at",
+                "is_deleted",
+            )
+        )
+
+    @classmethod
+    def list_updates(
+        cls,
+        since: pd.Timestamp,
+        filters: dict | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict]:
+        """Convenience helper returning a list from ``updates_queryset``.
+
+        Args:
+            since: timestamp lower bound (excluded).
+            filters: additional filters on the query.
+            limit: maximum number of items to return.
+            offset: number of items to skip from the beginning.
+
+        Each dict contains::
             attrs       : full business key dict
             chunk_index : int
             dtype       : str
             start_ts    : dt.datetime
             updated_at  : dt.datetime
+            is_deleted  : bool
         """
-        if filters is None:
-            filters = dict()
-        qs = (cls.objects
-              .filter(**filters, updated_at__gt=since)
-              .values(*cls.get_model_keys(),
-                      "chunk_index", "dtype",
-                      "start_ts", "updated_at", "is_deleted"))
+        qs = cls.updates_queryset(since, filters)
+        if offset:
+            qs = qs[offset:]
+        if limit is not None:
+            qs = qs[:limit]
+
         out = []
         for row in qs:
             out.append({
@@ -585,12 +623,49 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         Client-side helper: ingest the list produced by *export_chunks*.
         Each tuple is ``(blob_lz4, attrs_dict, meta_dict)``.
         """
-        for blob, attrs, meta in payload:
-            cls._ensure_all_attrs_specified(attrs, bonus_keys=['chunk_index'])
-            cls.objects.update_or_create(
-                defaults=dict(data=blob, **meta),
-                **attrs
-            )
+        if not payload:
+            return
+
+        # Pre-compute union of meta fields to update using bulk_update later on
+        meta_fields = set()
+        for _, _, meta in payload:
+            meta_fields.update(meta.keys())
+
+        now = _localised_now(timezone_name="UTC")
+
+        with transaction.atomic():
+            attrs_list = [attrs for _, attrs, _ in payload]
+            q = models.Q()
+            for attrs in attrs_list:
+                cls._ensure_all_attrs_specified(attrs, bonus_keys=["chunk_index"])
+                q |= models.Q(**attrs)
+
+            existing = {}
+            if attrs_list:
+                for row in cls.objects.filter(q):
+                    key = tuple(sorted((f, getattr(row, f)) for f in attrs_list[0].keys()))
+                    existing[key] = row
+
+            rows_to_create = []
+            rows_to_update = []
+            for blob, attrs, meta in payload:
+                key = tuple(sorted(attrs.items()))
+                if key in existing:
+                    row = existing[key]
+                    row.data = blob
+                    row.updated_at = now
+                    for k, v in meta.items():
+                        setattr(row, k, v)
+                    rows_to_update.append(row)
+                else:
+                    obj = cls(**attrs, data=blob, updated_at=now, **meta)
+                    rows_to_create.append(obj)
+
+            if rows_to_create:
+                cls.objects.bulk_create(rows_to_create)
+            if rows_to_update:
+                update_fields = ["data", "updated_at", *meta_fields]
+                cls.objects.bulk_update(rows_to_update, update_fields)
 
     # -- private helpers --
 
@@ -723,7 +798,6 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return cls._cached_index(row.start_ts, length)
 
     @classmethod
-    @lru_cache(maxsize=12*10)
     def _cached_index(cls, start_ts, length):
         return pd.date_range(
             start=pd.Timestamp(start_ts).tz_convert(cls.STORE_TZ),
@@ -736,10 +810,15 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     def _filter_interval(cls, qs: QuerySet, start: pd.Timestamp, end: pd.Timestamp):
         if isinstance(start, str):
             start = pd.Timestamp(start, tz=cls.STORE_TZ)
+        elif start is None:
+            pass
         else:
             start = pd.Timestamp(start).tz_convert(cls.STORE_TZ)
+
         if isinstance(end, str):
             end = pd.Timestamp(end, tz=cls.STORE_TZ)
+        elif end is None:
+            pass
         else:
             end = pd.Timestamp(end).tz_convert(cls.STORE_TZ)
 
