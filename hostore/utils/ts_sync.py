@@ -48,9 +48,7 @@ class ChunkIteratorPagination(LimitOffsetPagination):
 
         chunk_size = getattr(view, "qs_iterator_chunk_size", 200)
         return list(
-            queryset[self.offset : self.offset + self.limit].iterator(
-                chunk_size=chunk_size
-            )
+            queryset[self.offset : self.offset + self.limit]
         )
 
 
@@ -74,7 +72,6 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.GenericViewSet):
 
     store_model: Type['TimeseriesChunkStore'] = None
     pagination_class = ChunkIteratorPagination
-    qs_iterator_chunk_size = 200
 
     # 1) /updates/?since=ISO
     @action(detail=False, methods=["get"])

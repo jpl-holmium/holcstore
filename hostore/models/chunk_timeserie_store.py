@@ -557,7 +557,6 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         filters: dict | None = None,
         limit: int | None = None,
         offset: int | None = None,
-        qs_iterator_chunk_size: int = 200,
     ) -> list[dict]:
         """Convenience helper returning a list from ``updates_queryset``.
 
@@ -566,7 +565,6 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             filters: additional filters on the query.
             limit: maximum number of items to return.
             offset: number of items to skip from the beginning.
-            qs_iterator_chunk_size: size of queryset batch for iteration.
 
         Each dict contains::
             attrs       : full business key dict
@@ -583,7 +581,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             qs = qs[:limit]
 
         out = []
-        for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
+        for row in qs:
             out.append({
                 "attrs": {k: row[k] for k in cls.get_model_keys()},
                 "chunk_index": row["chunk_index"],

@@ -177,7 +177,7 @@ Main features
 | **Dense layout**                           | Each chunk is re-indexed on a regular grid (`STORE_FREQ`, `STORE_TZ`). |
 | **Smart upsert**                           | `set_ts(..., update=True)` merges with existing data via `combine_first`. |
 | **Bulk helpers**                           | `set_many_ts()` / `yield_many_ts()` for mass insert / streaming read. |
-| **Sync ready**                             | `list_updates`, `export_chunks`, `import_chunks` enable cheap client ↔ server replication. |
+| **Sync ready**                             | `updates_queryset`, `export_chunks`, `import_chunks` enable cheap client ↔ server replication. |
 | **REST scaffolding**                       | `TimeseriesChunkStoreSyncViewSet` + `TimeseriesChunkStoreSyncClient` give you plug-and-play API endpoints and a Python client. |
 
 Quick start
