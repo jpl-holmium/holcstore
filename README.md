@@ -197,12 +197,7 @@ class MyChunkedStore(TimeseriesChunkStore):
     ALLOW_CLIENT_SERVER_SYNC = False # if True, enable the sync features
     CACHED_INDEX_SIZE = 120  # max number of date indexes kept in cache
 ```
-Use `CACHED_INDEX_SIZE` to tune the size of the LRU cache used when rebuilding
-indexes:
-```python
-class MyChunkedStore(TimeseriesChunkStore):
-    CACHED_INDEX_SIZE = 360
-```
+
 The Custom fields are **strictly indexation axis** : you **must not** use them to store metadata or redundant data.
 
 During django's setup, any class that inherits from TimeseriesChunkStore will have its Meta properties unique_together and indexes automatically edited, such as it contains all your keys and the mandatory keys from the abstract store.
@@ -213,7 +208,15 @@ During django's setup, any class that inherits from TimeseriesChunkStore will ha
 `start_ts, data, dtype, updated_at, chunk_index, is_deleted`.
  * edit "Store settings" : `CHUNK_AXIS, STORE_TZ, STORE_FREQ, ALLOW_CLIENT_SERVER_SYNC` once the table has been created through migration. This **will** lead to data corruption.
 
+If you need to define a manager from a queryset ``, you need to inherits from `hostore.models.chunk_timeserie_store.ChunkQuerySet`
+```python
+class MyChunkedStore(TimeseriesChunkStore):
+    objects = MyChunkedStoreQuerySet().as_manager()
 
+class MyChunkedStoreQuerySet(ChunkQuerySet):
+    def custom_method(self, *args):
+        pass
+```
 
 ### 2/ Use your store class
 This summarize use cases with legal and illegal usages.
