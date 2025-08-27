@@ -373,7 +373,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             cls._bulk_create(rows, bulk_create_batch_size)
 
     @classmethod
-    def get_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None) -> None | pd.Series:
+    def get_ts(cls, attrs: dict, start: pd.Timestamp=None, end: pd.Timestamp=None, drop_bounds_na=True) -> None | pd.Series:
         """
         Retrieve a time-series matching *attrs*.
 
@@ -383,6 +383,8 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             Optional, start of time range to retrieve.
         end   : dt.datetime
             Optional, end of time range to retrieve.
+        drop_bounds_na : bool
+            Optional, drop nans from result.
 
         Notes
         -----
@@ -407,7 +409,9 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             return None
 
         full = pd.concat(pieces)
-        return cls._slice_serie(full, start, end)
+        serie = cls._finish_serie(full, start, end, drop_bounds_na)
+
+        return serie
 
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...],
@@ -450,7 +454,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
     @classmethod
     def yield_many_ts(cls, filters: dict, start: pd.Timestamp=None, end: pd.Timestamp=None,
-                      qs_iterator_chunk_size=200):
+                      qs_iterator_chunk_size=200, drop_bounds_na=True):
         """
         Yield (serie, filters_dict) for each available timeseries with filters matching filters.
             - serie will be expressed at STORE_FREQ, STORE_TZ
@@ -461,6 +465,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             start: start index of timeseries
             end: end index of timeseries
             qs_iterator_chunk_size: size of queryset batch
+            drop_bounds_na: drop NaNs
         """
         # On valide seulement les clés fournies
         cls._check_attrs(filters)
@@ -480,7 +485,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                 index=pd.date_range(start=min_idx, end=max_idx, inclusive='both', freq=cls.STORE_FREQ),
                 data=np.concatenate(buffer_data)
             )
-            serie = cls._slice_serie(serie, start, end)
+            serie = cls._finish_serie(serie, start, end, drop_bounds_na)
             key_dict = dict(zip(cls.get_model_keys(), current_values))
             yield serie, key_dict
             # fixme ? done outside to be allowed to erase _idx
@@ -848,13 +853,17 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             raise ValueError(f'Trying to set or get partial attributes {attrs} while full attributes list is {model_keys}')
 
     @classmethod
-    def _slice_serie(cls, serie, start, end):
+    def _finish_serie(cls, serie, start, end, drop_bounds_na):
         if start and end:
             serie = serie.loc[start:end]
         elif start:
             serie = serie.loc[start:]
         elif end:
             serie = serie.loc[:end]
+
+        if drop_bounds_na:
+            serie = serie.loc[serie.first_valid_index(): serie.last_valid_index()]
+
         return serie
 
     @classmethod
