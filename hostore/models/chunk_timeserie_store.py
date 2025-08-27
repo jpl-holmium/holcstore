@@ -672,7 +672,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     @classmethod
     def _normalize_serie(cls, serie: pd.Series) -> Union[None, pd.Series]:
         serie = cls._normalize_index(serie)
-        if str(serie.dtype) == 'object':
+        if (serie is not None) and (str(serie.dtype) == 'object'):
             serie = serie.apply(float)
         return serie
 
