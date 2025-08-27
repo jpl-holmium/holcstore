@@ -1,3 +1,7 @@
+### v0.5.5 - 2025-08-27
+- Normalize series dtype if object (fix get ts)
+- Guidelines for Queryset usages as manager
+
 ### v0.5.4 - 2025-08-12
 - Customize index cache size
 - Optimisation import_chunks (sync), pagination updates

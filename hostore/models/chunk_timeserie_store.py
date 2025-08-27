@@ -339,7 +339,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                              f'without update or replace option while ALLOW_CLIENT_SERVER_SYNC=True.')
 
         cls._ensure_all_attrs_specified(attrs)
-        serie = cls._normalize_index(serie)
+        serie = cls._normalize_serie(serie)
         if serie is None:
             return
 
@@ -438,7 +438,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         for ktuple, serie in mapping.items():
             attrs = dict(zip(keys, ktuple))
             cls._ensure_all_attrs_specified(attrs)
-            serie = cls._normalize_index(serie)
+            serie = cls._normalize_serie(serie)
             if serie is None:
                 continue
             for sub in cls._chunk(serie):
@@ -668,6 +668,13 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                 cls.objects.bulk_update(rows_to_update, update_fields)
 
     # -- private helpers --
+
+    @classmethod
+    def _normalize_serie(cls, serie: pd.Series) -> Union[None, pd.Series]:
+        serie = cls._normalize_index(serie)
+        if str(serie.dtype) == 'object':
+            serie = serie.apply(float)
+        return serie
 
     @classmethod
     def _normalize_index(cls, serie: pd.Series) -> Union[None, pd.Series]:
