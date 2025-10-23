@@ -1,5 +1,6 @@
 # ts_sync/views.py
 import functools
+import logging
 import traceback
 
 import backoff
@@ -14,6 +15,8 @@ from typing import Type
 
 DEBUG = False
 
+
+logger = logging.getLogger(__name__)
 
 def print_api_exception(view_func):
     """
@@ -87,6 +90,14 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.GenericViewSet):
             for k, v in request.query_params.items()
             if k not in {"since", "limit", "offset"}
         }
+
+        # log query
+        try:
+            user = self.request.user
+        except:
+            user = None
+        logger.info(f'Sync updates for model {self.store_model.__name__} required by user {user} since {since} (filters {filters})')
+
         qs = self.store_model.updates_queryset(since, filters)
         page = self.paginate_queryset(qs)
         data = [
@@ -111,6 +122,15 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.GenericViewSet):
                              f'while ALLOW_CLIENT_SERVER_SYNC=False.')
 
         spec    = request.data
+
+        # log query
+        try:
+            user = self.request.user
+        except:
+            user = None
+        logger.info(
+            f'Sync pack for model {self.store_model.__name__} required by user ({len(spec)} pieces)')
+
         chunks  = self.store_model.export_chunks(spec)
         payload = [
             {
@@ -165,7 +185,7 @@ class TimeseriesChunkStoreSyncClient:
             endpoint: url to call /updates/ and /pack/
             store_model: client TimeseriesChunkStore model to insert updates
             retry_max_tries: number of retry attemps
-            retry_max_time: retry time in seconds
+            retry_max_time: retry time in milliseconds
             requests_get_kwargs: kwargs to pass to requests.get
         """
         if not store_model.ALLOW_CLIENT_SERVER_SYNC:
@@ -192,15 +212,21 @@ class TimeseriesChunkStoreSyncClient:
             batch: chunk size for `/pack/` requests.
             page_size: number of items to request from `/updates/` per call.
         """
-        filters = filters or {}
+        filters = dict(filters or {})
 
-        since = self.store_model.last_updated_at()
-        url = f"{self.endpoint}/updates/"
+        since = self.store_model.last_updated_at(filters)
+        url_updates = f"{self.endpoint}/updates/"
         params = {"since": since.isoformat(), "limit": page_size, **filters}
         total_fetch = total_delete = 0
 
-        while url:
-            page = self._get(url, params=params)
+        def _parse_updated_at(value):
+            ts = pd.Timestamp(value)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            return ts.to_pydatetime()
+
+        while url_updates:
+            page = self._get(url_updates, params=params)
             params = None  # next links already contain query parameters
             updates = page.get("results", [])
             if not updates:
@@ -211,9 +237,11 @@ class TimeseriesChunkStoreSyncClient:
                 (to_delete if u["is_deleted"] else to_fetch).append(u)
 
             for d in to_delete:
-                self.store_model.objects.filter(
+                qs = self.store_model.objects.filter(
                     **d["attrs"], chunk_index=d["chunk_index"]
-                ).delete(keep_tracking=True)
+                )
+                qs.delete(keep_tracking=True)
+                qs.update(updated_at=_parse_updated_at(d["updated_at"]))
 
             for i in range(0, len(to_fetch), batch):
                 spec = to_fetch[i : i + batch]
@@ -226,7 +254,7 @@ class TimeseriesChunkStoreSyncClient:
 
             total_fetch += len(to_fetch)
             total_delete += len(to_delete)
-            url = page.get("next")
+            url_updates = page.get("next")
 
         return total_fetch, total_delete
 

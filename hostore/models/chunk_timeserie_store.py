@@ -541,7 +541,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
     @classmethod
     def updates_queryset(cls, since: pd.Timestamp, filters: dict | None = None):
-        """Return a queryset of chunks updated strictly after *since*.
+        """Return a queryset of chunks updated after *since*.
 
         The queryset is ordered by ``updated_at`` and primary key to ensure
         deterministic pagination.
@@ -549,7 +549,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         filters = filters or {}
         return (
             cls.objects
-            .filter(**filters, updated_at__gt=since)
+            .filter(**filters, updated_at__gte=since)
             .order_by("updated_at", "pk")
             .values(
                 *cls.get_model_keys(),
@@ -618,7 +618,12 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             row = cls.objects.get(**attrs, chunk_index=idx)
             attrs["chunk_index"] = row.chunk_index
             blob = row.data
-            meta = {"dtype": row.dtype, "start_ts": row.start_ts, "is_deleted": row.is_deleted}
+            meta = {
+                "dtype": row.dtype,
+                "start_ts": row.start_ts,
+                "is_deleted": row.is_deleted,
+                "updated_at": row.updated_at,
+            }
             out.append((blob, attrs, meta))
         return out
 
@@ -634,7 +639,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         # Pre-compute union of meta fields to update using bulk_update later on
         meta_fields = set()
         for _, _, meta in payload:
-            meta_fields.update(meta.keys())
+            meta_fields.update(k for k in meta.keys() if k != "updated_at")
 
         now = _localised_now(timezone_name="UTC")
 
@@ -655,15 +660,29 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             rows_to_update = []
             for blob, attrs, meta in payload:
                 key = tuple(sorted(attrs.items()))
+                updated_at = meta.get("updated_at")
+                if updated_at is not None:
+                    updated_at = pd.Timestamp(updated_at)
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.tz_localize("UTC")
+                    updated_at = updated_at.to_pydatetime()
+                else:
+                    updated_at = now
+                meta_without_updated = {k: v for k, v in meta.items() if k != "updated_at"}
                 if key in existing:
                     row = existing[key]
                     row.data = blob
-                    row.updated_at = now
-                    for k, v in meta.items():
+                    row.updated_at = updated_at
+                    for k, v in meta_without_updated.items():
                         setattr(row, k, v)
                     rows_to_update.append(row)
                 else:
-                    obj = cls(**attrs, data=blob, updated_at=now, **meta)
+                    obj = cls(
+                        **attrs,
+                        data=blob,
+                        updated_at=updated_at,
+                        **meta_without_updated,
+                    )
                     rows_to_create.append(obj)
 
             if rows_to_create:

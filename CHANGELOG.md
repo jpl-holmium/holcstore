@@ -1,4 +1,6 @@
-### v0.5.7 - 2025-10-23
+### v0.5.8 - 2025-10-23
+- TimeseriesChunkStoreSyncViewSet log calls
+- Bug fix for sync tools if client pull is killed
 - Pass get kwargs to TimeseriesChunkStoreSyncViewSet
 
 ### v0.5.6 - 2025-08-27
