@@ -1,6 +1,9 @@
+### v0.5.7 - 2025-10-23
+- Pass get kwargs to TimeseriesChunkStoreSyncViewSet
+
 ### v0.5.6 - 2025-08-27
 - Added drop_bounds_na to get_ts and yield_many_ts
-- 
+
 ### v0.5.5 - 2025-08-27
 - Normalize series dtype if object (fix get ts)
 - Guidelines for Queryset usages as manager
