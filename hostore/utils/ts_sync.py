@@ -156,6 +156,7 @@ class TimeseriesChunkStoreSyncClient:
                  store_model: Type['TimeseriesChunkStore'],
                  retry_max_tries: int = 5,
                  retry_max_time: int = 300,
+                 requests_get_kwargs=None
                  ):
         """
         Construct the synchronization client for store_model.
@@ -165,6 +166,7 @@ class TimeseriesChunkStoreSyncClient:
             store_model: client TimeseriesChunkStore model to insert updates
             retry_max_tries: number of retry attemps
             retry_max_time: retry time in seconds
+            requests_get_kwargs: kwargs to pass to requests.get
         """
         if not store_model.ALLOW_CLIENT_SERVER_SYNC:
             raise ValueError(f'Trying to use TimeseriesChunkStoreSyncClient with model {store_model.__name__} '
@@ -174,6 +176,7 @@ class TimeseriesChunkStoreSyncClient:
         self.store_model    = store_model
         self._retry_tries = retry_max_tries
         self._retry_time  = retry_max_time
+        self.requests_get_kwargs  = requests_get_kwargs if requests_get_kwargs is not None else {}
 
     # ----------- pull depuis le serveur -------------------------------
     def pull(
@@ -236,7 +239,7 @@ class TimeseriesChunkStoreSyncClient:
             max_time=self._retry_time,
         )
         def _call():
-            resp = requests.get(url, **kwargs)
+            resp = requests.get(url, **kwargs, **self.requests_get_kwargs)
             resp.raise_for_status()
             return resp.json()
         
