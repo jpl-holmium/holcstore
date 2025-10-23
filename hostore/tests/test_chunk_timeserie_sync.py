@@ -65,13 +65,15 @@ class SyncIntegrationTestCase(TransactionTestCase):
         # self.client = APIClient()
 
 
-    def _sync(self, filters=None):
+    def _sync(self, filters=None, **kwargs):
         with (
             patch.object(requests, "get",  self.req_client.get),
             # patch.object(requests, "post", self.req_client.post),
             # patch.object(requests, "put",  self.req_client.put),
         ):
-            return self.sync_client.pull(batch=20, filters=filters, page_size=4)
+            call_kwargs = {"batch": 20, "filters": filters, "page_size": 4}
+            call_kwargs.update(kwargs)
+            return self.sync_client.pull(**call_kwargs)
 
     # --------------------------------------------------------------
     def test_full_sync_and_update(self):
@@ -217,6 +219,67 @@ class SyncIntegrationTestCase(TransactionTestCase):
         self.assertEqual(seen_local.keys(), seen_remote.keys())
         for k in seen_local.keys():
             assert_series_equal(seen_local[k], seen_remote[k])
+
+    def test_partial_sync_crash_resumes(self):
+        # Seed server with two series and sync once
+        series = (
+            ({"version": 1, "kind": "A"}, self._make_series("2025-01-01", 24)),
+            ({"version": 2, "kind": "A"}, self._make_series("2025-01-02", 24)),
+        )
+        for attrs, serie in series:
+            ServerStore.set_ts(attrs, serie, replace=True)
+        self._sync()
+
+        # Update both series on server to create two updates
+        updated_series = (
+            ({"version": 1, "kind": "A"}, self._make_series("2025-01-01", 48)),
+            ({"version": 2, "kind": "A"}, self._make_series("2025-01-02", 48)),
+        )
+        for attrs, serie in updated_series:
+            ServerStore.set_ts(attrs, serie, update=True)
+
+        original_import = ClientStore.import_chunks.__func__
+        call_count = {"value": 0}
+
+        def crashing_import(cls, payload):
+            call_count["value"] += 1
+            original_import(cls, payload)
+            if call_count["value"] == 1:
+                raise RuntimeError("boom")
+
+        with patch.object(ClientStore, "import_chunks", new=classmethod(crashing_import)):
+            with self.assertRaises(RuntimeError):
+                self._sync(batch=1)
+
+        # Ensure only one update made it through
+        self.assertEqual(call_count["value"], 1)
+
+        # Second sync (without crashing) should resume and finish importing
+        fetch, delete = self._sync()
+        self.assertEqual(fetch, 1)
+        self.assertEqual(delete, 0)
+        self._assert_stores_equal()
+
+    def test_pull_uses_filters_for_since(self):
+        series = (
+            ({"version": 1, "kind": "A"}, self._make_series("2025-01-01", 24)),
+            ({"version": 1, "kind": "B"}, self._make_series("2025-01-01", 24)),
+        )
+        for attrs, serie in series:
+            ServerStore.set_ts(attrs, serie, replace=True)
+
+        called_with = {}
+
+        original_last_updated = ClientStore.last_updated_at.__func__
+
+        def wrapped_last_updated(cls, filters=None):
+            called_with["filters"] = filters
+            return original_last_updated(cls, filters)
+
+        with patch.object(ClientStore, "last_updated_at", new=classmethod(wrapped_last_updated)):
+            self._sync(filters={"kind": "A"})
+
+        self.assertEqual(called_with["filters"], {"kind": "A"})
 
 
 def _display_table_content(table, filters=None):
