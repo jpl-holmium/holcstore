@@ -541,7 +541,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
     @classmethod
     def updates_queryset(cls, since: pd.Timestamp, filters: dict | None = None):
-        """Return a queryset of chunks updated strictly after *since*.
+        """Return a queryset of chunks updated after *since*.
 
         The queryset is ordered by ``updated_at`` and primary key to ensure
         deterministic pagination.
@@ -549,7 +549,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         filters = filters or {}
         return (
             cls.objects
-            .filter(**filters, updated_at__gt=since)
+            .filter(**filters, updated_at__gte=since)
             .order_by("updated_at", "pk")
             .values(
                 *cls.get_model_keys(),
