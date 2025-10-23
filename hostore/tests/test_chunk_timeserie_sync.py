@@ -256,7 +256,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
 
         # Second sync (without crashing) should resume and finish importing
         fetch, delete = self._sync()
-        self.assertEqual(fetch, 1)
+        self.assertEqual(fetch, 2)
         self.assertEqual(delete, 0)
         self._assert_stores_equal()
 

@@ -96,7 +96,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.GenericViewSet):
             user = self.request.user
         except:
             user = None
-        logger.info(f'Sync updates for model {self.store_model} required by user {user} since {since} (filters {filters})')
+        logger.info(f'Sync updates for model {self.store_model.__name__} required by user {user} since {since} (filters {filters})')
 
         qs = self.store_model.updates_queryset(since, filters)
         page = self.paginate_queryset(qs)
@@ -129,7 +129,7 @@ class TimeseriesChunkStoreSyncViewSet(viewsets.GenericViewSet):
         except:
             user = None
         logger.info(
-            f'Sync pack for model {self.store_model} required by user {user} (spec {spec})')
+            f'Sync pack for model {self.store_model.__name__} required by user ({len(spec)} pieces)')
 
         chunks  = self.store_model.export_chunks(spec)
         payload = [
