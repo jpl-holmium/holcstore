@@ -192,12 +192,18 @@ class TimeseriesChunkStoreSyncClient:
             batch: chunk size for `/pack/` requests.
             page_size: number of items to request from `/updates/` per call.
         """
-        filters = filters or {}
+        filters = dict(filters or {})
 
-        since = self.store_model.last_updated_at()
+        since = self.store_model.last_updated_at(filters)
         url = f"{self.endpoint}/updates/"
         params = {"since": since.isoformat(), "limit": page_size, **filters}
         total_fetch = total_delete = 0
+
+        def _parse_updated_at(value):
+            ts = pd.Timestamp(value)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            return ts.to_pydatetime()
 
         while url:
             page = self._get(url, params=params)
@@ -211,9 +217,11 @@ class TimeseriesChunkStoreSyncClient:
                 (to_delete if u["is_deleted"] else to_fetch).append(u)
 
             for d in to_delete:
-                self.store_model.objects.filter(
+                qs = self.store_model.objects.filter(
                     **d["attrs"], chunk_index=d["chunk_index"]
-                ).delete(keep_tracking=True)
+                )
+                qs.delete(keep_tracking=True)
+                qs.update(updated_at=_parse_updated_at(d["updated_at"]))
 
             for i in range(0, len(to_fetch), batch):
                 spec = to_fetch[i : i + batch]

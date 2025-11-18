@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+from contextlib import contextmanager
 from functools import lru_cache
 from hashlib import blake2b
 from typing import Union, List
@@ -50,6 +51,21 @@ class ChunkQuerySet(models.QuerySet):
             return super().update(is_deleted=True, data=EMPTY_DATA,
                                   updated_at=_localised_now(timezone_name='UTC'),
                                   )
+
+
+@contextmanager
+def _manual_updated_at(field: models.DateTimeField):
+    """Temporarily disable ``auto_now`` so we can persist explicit values."""
+
+    auto_now = getattr(field, "auto_now", False)
+    auto_now_add = getattr(field, "auto_now_add", False)
+    field.auto_now = False
+    field.auto_now_add = False
+    try:
+        yield
+    finally:
+        field.auto_now = auto_now
+        field.auto_now_add = auto_now_add
 
 def _meta_name(model, suffix: str, *, max_len: int = 30) -> str:
     """
@@ -618,7 +634,12 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             row = cls.objects.get(**attrs, chunk_index=idx)
             attrs["chunk_index"] = row.chunk_index
             blob = row.data
-            meta = {"dtype": row.dtype, "start_ts": row.start_ts, "is_deleted": row.is_deleted}
+            meta = {
+                "dtype": row.dtype,
+                "start_ts": row.start_ts,
+                "is_deleted": row.is_deleted,
+                "updated_at": row.updated_at,
+            }
             out.append((blob, attrs, meta))
         return out
 
@@ -634,11 +655,13 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         # Pre-compute union of meta fields to update using bulk_update later on
         meta_fields = set()
         for _, _, meta in payload:
-            meta_fields.update(meta.keys())
+            meta_fields.update(k for k in meta.keys() if k != "updated_at")
 
         now = _localised_now(timezone_name="UTC")
 
-        with transaction.atomic():
+        updated_field = cls._meta.get_field("updated_at")
+
+        with transaction.atomic(), _manual_updated_at(updated_field):
             attrs_list = [attrs for _, attrs, _ in payload]
             q = models.Q()
             for attrs in attrs_list:
@@ -655,15 +678,29 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             rows_to_update = []
             for blob, attrs, meta in payload:
                 key = tuple(sorted(attrs.items()))
+                updated_at = meta.get("updated_at")
+                if updated_at is not None:
+                    updated_at = pd.Timestamp(updated_at)
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.tz_localize("UTC")
+                    updated_at = updated_at.to_pydatetime()
+                else:
+                    updated_at = now
+                meta_without_updated = {k: v for k, v in meta.items() if k != "updated_at"}
                 if key in existing:
                     row = existing[key]
                     row.data = blob
-                    row.updated_at = now
-                    for k, v in meta.items():
+                    row.updated_at = updated_at
+                    for k, v in meta_without_updated.items():
                         setattr(row, k, v)
                     rows_to_update.append(row)
                 else:
-                    obj = cls(**attrs, data=blob, updated_at=now, **meta)
+                    obj = cls(
+                        **attrs,
+                        data=blob,
+                        updated_at=updated_at,
+                        **meta_without_updated,
+                    )
                     rows_to_create.append(obj)
 
             if rows_to_create:
