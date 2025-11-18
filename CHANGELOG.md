@@ -1,3 +1,6 @@
+### v0.5.9 - 2025-11-18
+- Bug fix for sync tools
+
 ### v0.5.8 - 2025-10-23
 - TimeseriesChunkStoreSyncViewSet log calls
 - Bug fix for sync tools if client pull is killed
