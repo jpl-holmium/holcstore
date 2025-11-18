@@ -184,7 +184,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     # Métadonnées obligatoires
     start_ts = models.DateTimeField()        # premier timestamp inclus
     dtype    = models.CharField(max_length=16)  # ex. 'float64'
-    updated_at = models.DateTimeField(auto_now=True)  # synchro
+    updated_at = models.DateTimeField(auto_now=False)  # synchro
     is_deleted = models.BooleanField(default=False)  # keep trace of deleted objects
 
     # Données brutes
@@ -773,6 +773,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             dtype=str(arr.dtype),
             data=compressed,
             is_deleted=False,
+            updated_at=_localised_now(timezone_name='UTC'),
         )
 
     @classmethod
@@ -800,6 +801,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
                 'dtype': row.dtype,
                 'data': row.data,
                 'is_deleted': False,
+                'updated_at': _localised_now(timezone_name='UTC'),
             }
 
             cls.objects.update_or_create(

@@ -105,7 +105,7 @@ class SyncIntegrationTestCase(TransactionTestCase):
 
         # sync kind B : no changes for kind A on client side
         n_fetch, n_del = self._sync(filters={"kind": "B"})
-        self.assertEqual(n_fetch, 0)
+        self.assertEqual(n_fetch, 1)  # gte => 1 chunk
         self.assertEqual(n_del, 0)
         self._assert_stores_equal(filters={"kind": "B"})
 
