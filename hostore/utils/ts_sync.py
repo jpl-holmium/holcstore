@@ -1,6 +1,7 @@
 # ts_sync/views.py
 import functools
 import logging
+import time
 import traceback
 
 import backoff
@@ -12,6 +13,7 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.response import Response
 import base64, pandas as pd
 from typing import Type
+import datetime as dt
 
 DEBUG = False
 
@@ -258,17 +260,38 @@ class TimeseriesChunkStoreSyncClient:
 
         return total_fetch, total_delete
 
-    # ----------- requête HTTP avec back-off paramétrable --------------
+
     def _get(self, url: str, **kwargs):
-        @backoff.on_exception(
+
+        # Retry tant que _call() retourne None
+        @backoff.on_predicate(
             backoff.expo,
-            requests.exceptions.RequestException,
             max_tries=self._retry_tries,
             max_time=self._retry_time,
         )
         def _call():
             resp = requests.get(url, **kwargs, **self.requests_get_kwargs)
-            resp.raise_for_status()
-            return resp.json()
-        
+
+            # Si ce n'est pas un 429 -> comportement "normal"
+            if resp.status_code != 429:
+                resp.raise_for_status()
+                return resp.json()
+
+            # On récupère la valeur du retry-after
+            retry_after = resp.headers.get("Retry-After")
+
+            if retry_after:
+                try:
+                    delay = int(retry_after)
+                    logger.info(f"Rate limit reached. Waiting {delay}s (Retry-After)")
+                    time.sleep(delay)
+                except ValueError as e:
+                    logger.error(f"Something went wrong while waiting : {retry_after} (Retry-After)")
+                    # DRF ne renvoie normalement QUE des entiers
+                    raise e
+
+            # Retourne None déclenche un retry SANS compter un échec
+            return None
+
         return _call()
+

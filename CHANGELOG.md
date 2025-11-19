@@ -1,3 +1,6 @@
+### v0.5.10 - 2025-11-18
+- Handle Retry-After waiting delay
+
 ### v0.5.9 - 2025-11-18
 - Bug fix for sync tools
 
