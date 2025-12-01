@@ -1,3 +1,6 @@
+### v0.5.11 - 2025-12-01
+- Minor fix : handle request bounds (start, end) with NaT type.
+
 ### v0.5.10 - 2025-11-18
 - Handle Retry-After waiting delay
 
