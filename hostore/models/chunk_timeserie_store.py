@@ -843,15 +843,15 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     def _filter_interval(cls, qs: QuerySet, start: pd.Timestamp, end: pd.Timestamp):
         if isinstance(start, str):
             start = pd.Timestamp(start, tz=cls.STORE_TZ)
-        elif start is None:
-            pass
+        elif pd.isna(start):
+            start = None
         else:
             start = pd.Timestamp(start).tz_convert(cls.STORE_TZ)
 
         if isinstance(end, str):
             end = pd.Timestamp(end, tz=cls.STORE_TZ)
-        elif end is None:
-            pass
+        elif pd.isna(end):
+            end = None
         else:
             end = pd.Timestamp(end).tz_convert(cls.STORE_TZ)
 
