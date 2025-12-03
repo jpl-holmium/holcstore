@@ -5,7 +5,8 @@ from django.db import models, IntegrityError
 from django.test import TransactionTestCase
 
 from hostore.models import TimeseriesChunkStore
-from hostore.utils.timeseries import ts_combine_first, _localise_date_interval
+from hostore.utils.timeseries import ts_combine_first, _localise_date_interval, _localise_date, \
+    _tz_convert_datetime
 from hostore.utils.utils_test import TempTestTableHelper
 
 
@@ -179,8 +180,32 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
         attrs = self.make_attrs({"version": 3, "kind_very_long_name_for_testing_purpose": "C"})
         self.test_table.set_ts(attrs, serie)
         start, end = _localise_date_interval(dt.date(2019, 6, 1), dt.date(2019, 6, 2))
+
+        # regular extraction
         sub = self.test_table.get_ts(attrs, start=start, end=end)
         expected = serie[start:end]
+        assert_series_equal(sub, expected)
+
+        # one NaT
+        sub = self.test_table.get_ts(attrs, start=pd.NaT, end=end)
+        expected = serie[:end]
+        assert_series_equal(sub, expected)
+
+        # one NoNe
+        sub = self.test_table.get_ts(attrs, start=None, end=end)
+        expected = serie[:end]
+        assert_series_equal(sub, expected)
+
+        # NaT NoNe
+        sub = self.test_table.get_ts(attrs, start=None, end=pd.NaT)
+        expected = serie
+        assert_series_equal(sub, expected)
+
+        # different TZ
+        start_tz = _localise_date(dt.date(2019, 6, 1), timezone_name='Europe/Paris')
+        end_tz = _localise_date(dt.date(2019, 6, 2), timezone_name='UTC')
+        sub = self.test_table.get_ts(attrs, start=start_tz, end=end_tz)
+        expected = serie[start_tz : _tz_convert_datetime(end_tz, 'Europe/Paris')]
         assert_series_equal(sub, expected)
 
     def test_update_and_replace(self):
