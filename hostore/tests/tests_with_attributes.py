@@ -17,6 +17,13 @@ class TestDataStoreWithAttribute(Store):
         app_label = 'ts_inline'
         managed = True
 
+class TestDataStoreWithAttributes(Store):
+    year = models.IntegerField()
+    class Meta(Store.Meta):
+        abstract = False
+        constraints = [models.UniqueConstraint(fields=['prm', 'client_id', 'year', 'created_at'], name='hostore_TestDataStoreWithAttribute_unq'), ]
+        app_label = 'ts_inline'
+        managed = True
 
 class HoCacheWithAttributesTestCase(TransactionTestCase, TempTestTableHelper):
     databases = ('default',)
@@ -54,18 +61,18 @@ class HoCacheWithAttributesTestCase(TransactionTestCase, TempTestTableHelper):
         # On récupére les données data_name en combinant par prm et année (2 entrées)
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=True,
                                                  combined_by=('prm', 'year'))
-        self.assertEquals(len(data), 2)
+        self.assertEqual(len(data), 2)
 
         # On récupére les données data_name en combinant par prm et année (1 prm avec 2 entrées)
         data = TestDataStoreWithAttribute.get_many_lc([data_name], self.test_client_id, combined_versions=True,
                                                       combined_by=('prm', 'year'))
-        self.assertEquals(len(data), 1)
-        self.assertEquals(len(data[data_name]), 2)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(len(data[data_name]), 2)
 
         # On récupére les données data_name en combinant par version (toutes à 0)
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=True,
                                                  combined_by=('version',))
-        self.assertEquals(len(data), 1)
+        self.assertEqual(len(data), 1)
 
         created_at_two = dt.datetime.now().astimezone(ZoneInfo("Europe/Paris"))
         # Ajout d'une deuxième courbe sur 2024
@@ -79,7 +86,7 @@ class HoCacheWithAttributesTestCase(TransactionTestCase, TempTestTableHelper):
         # On récupére les données data_name en combinant par prm (2 entrées) mais pour l'année 2024 nous devons avoir les valeur de test_data_2
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=True,
                                                  combined_by=('prm', 'year'), order_by=('-created_at',))
-        self.assertEquals(len(data), 2)
+        self.assertEqual(len(data), 2)
 
         data_2024 = next(filter(lambda d: d['year'] == 2024, data), None)
         pd.testing.assert_series_equal(data_2024['data'], self.test_data_2, check_names=False)
@@ -104,15 +111,15 @@ class HoCacheWithAttributesTestCase(TransactionTestCase, TempTestTableHelper):
                                           versionning_by=('prm',))
 
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=False, order_by=('-created_at',))
-        self.assertEquals(len(data), 2)
-        self.assertEquals(sorted([d['version'] for d in data]), [0, 1])
+        self.assertEqual(len(data), 2)
+        self.assertEqual(sorted([d['version'] for d in data]), [0, 1])
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=True, combined_by=('prm',),
                                                  order_by=('-created_at',))
-        self.assertEquals(len(data), 1)
+        self.assertEqual(len(data), 1)
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=True,
                                                  combined_by=('prm', 'year'),
                                                  order_by=('-created_at',))
-        self.assertEquals(len(data), 2)
+        self.assertEqual(len(data), 2)
 
         # On supprime les données et on versionne par prm et year
         TestDataStoreWithAttribute.clear_all(self.test_client_id)
@@ -141,16 +148,25 @@ class HoCacheWithAttributesTestCase(TransactionTestCase, TempTestTableHelper):
 
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=False,
                                                  order_by=('-created_at',))
-        self.assertEquals(len(data), 3)
+        self.assertEqual(len(data), 3)
         # 2 versions pour 2024, 1 version pour 2025
-        self.assertEquals(sorted([d['version'] for d in data]), [0, 0, 1])
+        self.assertEqual(sorted([d['version'] for d in data]), [0, 0, 1])
         data = TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=True,
                                                  combined_by=('prm', 'year'),
                                                  order_by=('-created_at',))
         # 2024 et 2025 combiné
-        self.assertEquals(len(data), 2)
+        self.assertEqual(len(data), 2)
         data_2024 = next(filter(lambda d: d['year'] == 2024, data), None)
         pd.testing.assert_series_equal(data_2024['data'], self.test_data_2, check_names=False)
         data_2025 = next(filter(lambda d: d['year'] == 2025, data), None)
         pd.testing.assert_series_equal(data_2025['data'], self.test_data, check_names=False)
 
+
+    def test_set_lc(self):
+        TestDataStoreWithAttribute.clear_all(self.test_client_id)
+        data_name = 'data_name'
+        created_at_one = dt.datetime.now().astimezone(ZoneInfo("Europe/Paris"))
+        TestDataStoreWithAttribute.set_lc(prm=data_name, value=self.test_data, client_id=self.test_client_id,
+                                          attributes_to_set=dict(year=2024),
+                                          versionning=True)
+        print(TestDataStoreWithAttribute.get_lc(data_name, self.test_client_id, combined_versions=False,))

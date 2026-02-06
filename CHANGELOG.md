@@ -1,3 +1,7 @@
+### v0.5.11 - 2026-02-06
+- Refacto & improve yield_many
+- switch assertEquals to assertEqual
+
 ### v0.5.10 - 2025-11-18
 - Handle Retry-After waiting delay
 

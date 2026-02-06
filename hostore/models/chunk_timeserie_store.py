@@ -2,6 +2,7 @@ import datetime as dt
 import logging
 from functools import lru_cache
 from hashlib import blake2b
+from itertools import groupby
 from typing import Union, List
 
 import pytz
@@ -456,62 +457,76 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
     def yield_many_ts(cls, filters: dict, start: pd.Timestamp=None, end: pd.Timestamp=None,
                       qs_iterator_chunk_size=200, drop_bounds_na=True):
         """
-        Yield (serie, filters_dict) for each available timeseries with filters matching filters.
-            - serie will be expressed at STORE_FREQ, STORE_TZ
-            - attrs_dict : mapping {model_key: value}
+            Générateur extrayant et reconstruisant des séries temporelles par groupes de segments (chunks).
 
-        Args:
-            filters: filters of query
-            start: start index of timeseries
-            end: end index of timeseries
-            qs_iterator_chunk_size: size of queryset batch
-            drop_bounds_na: drop NaNs
+            Cette méthode optimise la consommation mémoire en utilisant un itérateur SQL et un
+            regroupement "lazy" (paresseux). Elle assemble les segments de données compressés
+            en base de données pour recréer des objets pandas.Series continus.
+
+            Args:
+                filters (dict): Critères de recherche pour la requête Django (ex: {'site_id': 12}).
+                start (pd.Timestamp, optional): Date de début pour le filtrage et le découpage.
+                end (pd.Timestamp, optional): Date de fin pour le filtrage et le découpage.
+                qs_iterator_chunk_size (int): Nombre de CDC chargées en RAM depuis la DB.
+                    Défaut à 200.
+                drop_bounds_na (bool): Si True, nettoie les NaN aux extrémités de la série
+                    reconstruite. Défaut à True.
+
+            Yields:
+                tuple[pd.Series, dict]: Un tuple (serie, metadata) où :
+                    - serie : Objet pandas.Series indexé en temps (fréquence `cls.STORE_FREQ`).
+                    - metadata : Dictionnaire des clés du modèle identifiant la série (ex: {'prm': "A"}).
+
+            Note:
+                La performance repose sur le tri SQL `order_by(*model_keys, 'chunk_index')`,
+                permettant à `itertools.groupby` de traiter les segments de manière séquentielle
+                sans charger l'intégralité du QuerySet en mémoire.
         """
         # On valide seulement les clés fournies
         cls._check_attrs(filters)
+        model_keys = cls.get_model_keys()
 
-        qs = cls.objects.filter(**filters, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
-        if start or end:
-            qs = cls._filter_interval(qs, start, end)
+        # construction de la requête
+        qs = (cls.objects.filter(**filters, is_deleted=False)
+                  .order_by(*model_keys, 'chunk_index'))
+        qs = cls._filter_interval(qs, start, end)
 
-        current_values = None
-        buffer_data = []
-        min_idx, max_idx = None, None
-        def flush():
+        # Fonction utilitaire pour extraire la clé de groupement
+        def get_group_key(row):
+            return tuple(getattr(row, k) for k in model_keys)
+
+        # itération par groupe
+        iterator = qs.iterator(chunk_size=qs_iterator_chunk_size)
+
+        for keys_tuple, rows in groupby(iterator, key=get_group_key):
+            buffer_data = []
+            all_min = []
+            all_max = []
+
+            # Extraction des chunks du groupe actuel
+            for row in rows:
+                _min, _max, data = cls._decompress(row, return_mode='light')
+                all_min.append(_min)
+                all_max.append(_max)
+                buffer_data.append(data)
+
             if not buffer_data:
-                return
+                continue
 
+            # reconstruction de la série
             serie = pd.Series(
-                index=pd.date_range(start=min_idx, end=max_idx, inclusive='both', freq=cls.STORE_FREQ),
+                index=pd.date_range(
+                    start=min(all_min),
+                    end=max(all_max),
+                    inclusive='both',
+                    freq=cls.STORE_FREQ
+                ),
                 data=np.concatenate(buffer_data)
             )
+
+            # Nettoyage final
             serie = cls._finish_serie(serie, start, end, drop_bounds_na)
-            key_dict = dict(zip(cls.get_model_keys(), current_values))
-            yield serie, key_dict
-            # fixme ? done outside to be allowed to erase _idx
-            # buffer_data.clear()
-            # min_idx = None
-            # max_idx = None
-
-        for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
-            values = tuple(getattr(row, k) for k in cls.get_model_keys())
-            if current_values is None:
-                current_values = values
-            elif values != current_values:
-                # nouvelle combinaison → on émet la série courante
-                yield from flush()
-                buffer_data.clear()
-                min_idx = None
-                max_idx = None
-
-                current_values = values
-            _idx_min, _idx_max, data = cls._decompress(row, return_mode='light')
-            min_idx = min(min_idx, _idx_min) if min_idx else _idx_min
-            max_idx = max(max_idx, _idx_max) if max_idx else _idx_max
-            buffer_data.append(data)
-
-        # flush final
-        yield from flush()
+            yield serie, dict(zip(model_keys, keys_tuple))
 
     @classmethod
     def get_max_horodate(cls, filters: dict, qs_iterator_chunk_size=200):

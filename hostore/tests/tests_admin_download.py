@@ -84,7 +84,7 @@ class DownloadTimeseriesAdminActionTest(TransactionTestCase, TempTestTableHelper
                 # Read the file content (assuming it's a text file, like CSV)
                 file_content = specific_file.read().decode('utf-8')
                 expected = ';filename;year;kind\n0;export_serie_0.csv;2020;a\n1;export_serie_1.csv;2020;b\n'
-                self.assertEquals(file_content, expected)
+                self.assertEqual(file_content, expected)
 
 
 class TestAdminTimeseriesChunkStore(TimeseriesChunkStore):

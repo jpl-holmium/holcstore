@@ -32,7 +32,7 @@ class HoCacheSliceDelayTestCase(TransactionTestCase, TempTestTableHelper):
         data = TestDataStore.get_lc(self.test_prm, self.test_client_id, combined_versions=True,
                                     combined_delay=pd.Timedelta(days=1))
 
-        self.assertEquals(len(data), 1)
+        self.assertEqual(len(data), 1)
         # Nous sommes décalés de 1 jour
         expected_data = ts_combine_first([self.test_data_2.iloc[24:], self.test_data.iloc[24:]])
         pd.testing.assert_series_equal(data[0]['data'], expected_data, check_names=False)
@@ -40,7 +40,7 @@ class HoCacheSliceDelayTestCase(TransactionTestCase, TempTestTableHelper):
         data = TestDataStore.get_lc(self.test_prm, self.test_client_id, combined_versions=True,
                                     combined_delay=pd.Timedelta(days=2))
 
-        self.assertEquals(len(data), 1)
+        self.assertEqual(len(data), 1)
         # Nous sommes décalés de 2 jours
         expected_data = ts_combine_first([self.test_data_2.iloc[48:], self.test_data.iloc[48:]])
         pd.testing.assert_series_equal(data[0]['data'], expected_data, check_names=False)
@@ -48,7 +48,7 @@ class HoCacheSliceDelayTestCase(TransactionTestCase, TempTestTableHelper):
         data = TestDataStore.get_many_lc([self.test_prm], self.test_client_id, combined_versions=True,
                                          combined_delay=pd.Timedelta(days=2))
 
-        self.assertEquals(len(data), 1)
+        self.assertEqual(len(data), 1)
         # Nous sommes décalés de 2 jours
         expected_data = ts_combine_first([self.test_data_2.iloc[48:], self.test_data.iloc[48:]])
         pd.testing.assert_series_equal(data[self.test_prm][0]['data'], expected_data, check_names=False)

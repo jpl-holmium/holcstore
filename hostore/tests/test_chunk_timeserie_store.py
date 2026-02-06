@@ -297,6 +297,63 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
         with self.assertRaises(ValueError):
             self.test_table.set_ts({"version": 8, "kind_very_long_name_for_testing_purpose": "J"}, bad)
 
+class TestTwoTimeseriesTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year
+    """
+    __unittest_skip__ = False
+    test_table = TestStoreChunkYear
+    year_count_expected = 1
+
+    def test_yield_two_distinct_series(self):
+        """
+        Teste la persistence et la récupération de deux séries distinctes
+        partageant un attribut commun.
+        """
+        if self.no_user_fields:
+            return
+
+        # 1. Préparation des métadonnées
+        common_version = 10
+        attrs_a = self.make_attrs({
+            "version": common_version,
+            "kind_very_long_name_for_testing_purpose": "SERIE_A"
+        })
+        attrs_b = self.make_attrs({
+            "version": common_version,
+            "kind_very_long_name_for_testing_purpose": "SERIE_B"
+        })
+
+        # 2. Création de deux séries avec des données différentes (seeds différentes)
+        serie_a = self.make_series("2024-01-01", 24 * 7, seed=1)
+        serie_b = self.make_series("2024-01-01", 24 * 7, seed=2)
+
+        # 3. Stockage
+        self.test_table.set_ts(attrs_a, serie_a)
+        self.test_table.set_ts(attrs_b, serie_b)
+
+        # 6. Vérification de la récupération groupée via yield_many_ts
+        results = list(self.test_table.yield_many_ts({"version": common_version}))
+        self.assertEqual(len(results), 2, "On devrait récupérer exactement 2 séries pour cette version.")
+
+        # 7. Vérification précise des valeurs retournées par yield_many_ts
+        # On crée un dictionnaire indexé par le 'kind' pour comparer facilement
+        kind_key = "kind_very_long_name_for_testing_purpose"
+        yielded_map = {attrs[kind_key]: serie for serie, attrs in results}
+
+        # Vérification de la SERIE_A
+        self.assertIn("SERIE_A", yielded_map)
+        assert_series_equal(yielded_map["SERIE_A"], serie_a)
+
+        # Vérification de la SERIE_B
+        self.assertIn("SERIE_B", yielded_map)
+        assert_series_equal(yielded_map["SERIE_B"], serie_b)
+
+        # 8. Vérification que les métadonnées retournées sont complètes
+        for serie, attrs in results:
+            self.assertEqual(attrs["version"], common_version)
+            self.assertIn(attrs[kind_key], ["SERIE_A", "SERIE_B"])
+
 
 class TestTimeseries_1ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
     """
