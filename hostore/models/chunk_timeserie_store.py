@@ -398,9 +398,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             The reconstructed series, or *None* if no chunk matches.
         """
         cls._ensure_all_attrs_specified(attrs)
+        start = cls._ensure_datetime(start)
+        end = cls._ensure_datetime(end)
+
         qs = cls.objects.filter(**attrs, is_deleted=False).order_by('chunk_index')
-        if start or end:
-            qs = cls._filter_interval(qs, start, end)
+        qs = cls._filter_interval(qs, start, end)
 
         pieces = []
         for row in qs:
@@ -485,10 +487,10 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         # On valide seulement les clés fournies
         cls._check_attrs(filters)
         model_keys = cls.get_model_keys()
+        start = cls._ensure_datetime(start)
+        end = cls._ensure_datetime(end)
 
-        # construction de la requête
-        qs = (cls.objects.filter(**filters, is_deleted=False)
-                  .order_by(*model_keys, 'chunk_index'))
+        qs = cls.objects.filter(**filters, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
         qs = cls._filter_interval(qs, start, end)
 
         # Fonction utilitaire pour extraire la clé de groupement
@@ -855,21 +857,17 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         )
 
     @classmethod
+    def _ensure_datetime(cls, dtm: Union[pd.Timestamp, dt.datetime, str, None]):
+        if isinstance(dtm, str):
+            dtm = pd.Timestamp(dtm, tz=cls.STORE_TZ)
+        elif pd.isna(dtm):
+            dtm = None
+        else:
+            dtm = pd.Timestamp(dtm).tz_convert(cls.STORE_TZ)
+        return dtm
+
+    @classmethod
     def _filter_interval(cls, qs: QuerySet, start: pd.Timestamp, end: pd.Timestamp):
-        if isinstance(start, str):
-            start = pd.Timestamp(start, tz=cls.STORE_TZ)
-        elif start is None:
-            pass
-        else:
-            start = pd.Timestamp(start).tz_convert(cls.STORE_TZ)
-
-        if isinstance(end, str):
-            end = pd.Timestamp(end, tz=cls.STORE_TZ)
-        elif end is None:
-            pass
-        else:
-            end = pd.Timestamp(end).tz_convert(cls.STORE_TZ)
-
         if start:
             qs = qs.filter(chunk_index__gte=cls._chunk_index(start))
         if end:
