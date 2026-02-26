@@ -1,3 +1,6 @@
+### v0.6.0 - 2026-02-26
+- Add DataFrameStore
+
 ### v0.5.13 - 2026-02-06
 - Refacto & improve yield_many
 - switch assertEquals to assertEqual
