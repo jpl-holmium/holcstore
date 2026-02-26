@@ -1,3 +1,7 @@
+### v0.5.13 - 2026-02-06
+- Refacto & improve yield_many
+- switch assertEquals to assertEqual
+
 ### v0.5.12 - 2025-12-01
 - Minor fix : handle request bounds (start, end) with NaT type and different timezone.
 

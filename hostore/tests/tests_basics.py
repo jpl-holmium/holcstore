@@ -38,7 +38,7 @@ class HoCacheTestCase(TransactionTestCase, TempTestTableHelper):
         # Test the get_lc method
         cache_entry = TestDataStore.get_lc(prm=self.test_prm, client_id=self.test_client_id)
         self.assertIsNotNone(cache_entry)
-        self.assertEquals(len(cache_entry), 1)
+        self.assertEqual(len(cache_entry), 1)
         self.assertEqual(cache_entry[0]['prm'], self.test_prm)
         pd.testing.assert_series_equal(cache_entry[0]['data'], self.test_data, check_names=False)
 
@@ -75,12 +75,12 @@ class HoCacheTestCase(TransactionTestCase, TempTestTableHelper):
 
         # Récupération des données du PRM sans spécifier de version
         data = TestDataStore.get_lc(new_prm, self.test_client_id)
-        self.assertEquals(len(data), 1)
+        self.assertEqual(len(data), 1)
         pd.testing.assert_series_equal(data[0]['data'], self.test_data, check_names=False)
 
         # Récupération des données du PRM en spécifiant la version
         data = TestDataStore.get_lc(new_prm, self.test_client_id, version=0)
-        self.assertEquals(len(data), 1)
+        self.assertEqual(len(data), 1)
         pd.testing.assert_series_equal(data[0]['data'], self.test_data, check_names=False)
 
     def test_set_existing_lc(self):
@@ -91,48 +91,48 @@ class HoCacheTestCase(TransactionTestCase, TempTestTableHelper):
         TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id, versionning=False)
 
         data = TestDataStore.get_lc(new_prm, self.test_client_id, version=0)
-        self.assertEquals(len(data), 1)
-        self.assertEquals(data[0]['version'], 0)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['version'], 0)
 
         # Insert 2 times in a row with versionning
         TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id, versionning=True)
         TestDataStore.set_lc(prm=new_prm, value=self.test_data, client_id=self.test_client_id, versionning=True)
 
         data = TestDataStore.get_lc(new_prm, self.test_client_id, combined_versions=False)
-        self.assertEquals(len(data), 3)
-        self.assertEquals(data[0]['version'], 2)
+        self.assertEqual(len(data), 3)
+        self.assertEqual(data[0]['version'], 2)
 
         data = TestDataStore.get_lc(new_prm, self.test_client_id, combined_versions=True)
-        self.assertEquals(len(data), 1)
-        self.assertEquals(data[0]['version'], 2)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['version'], 2)
 
     def test_combined_versions(self):
         data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=True)
-        self.assertEquals(len(data), 1)
-        self.assertEquals(data[0]['version'], 1)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['version'], 1)
         # Vérifier que la combinaison donne la deuxième version
         pd.testing.assert_series_equal(data[0]['data'], self.test_data_2, check_names=False)
 
         # test if we specify a version
         data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=False, version=1)
-        self.assertEquals(len(data), 1)
-        self.assertEquals(data[0]['version'], 1)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['version'], 1)
         # Vérifier que la combinaison donne la deuxième version
         pd.testing.assert_series_equal(data[0]['data'], self.test_data_2, check_names=False)
 
     def test_non_combined_versions(self):
         data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=False)
-        self.assertEquals(len(data), 2)
-        self.assertEquals(data[0]['version'], 1)
-        self.assertEquals(data[1]['version'], 0)
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0]['version'], 1)
+        self.assertEqual(data[1]['version'], 0)
         # Vérifier que la combinaison donne la deuxième version
         pd.testing.assert_series_equal(data[0]['data'], self.test_data_2, check_names=False)
         pd.testing.assert_series_equal(data[1]['data'], self.test_data, check_names=False)
 
         # test if we specify a version
         data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=False, version=0)
-        self.assertEquals(len(data), 1)
-        self.assertEquals(data[0]['version'], 0)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['version'], 0)
         # Vérifier que la combinaison donne la deuxième version
         pd.testing.assert_series_equal(data[0]['data'], self.test_data, check_names=False)
 
@@ -216,28 +216,28 @@ class HoCacheTestCase(TransactionTestCase, TempTestTableHelper):
 
         # Get holes of one_hole
         holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['one_hole']))
-        self.assertEquals(len(holes), 1)
-        self.assertEquals(holes[0][0], 'one_hole')
-        self.assertEquals(holes[0][1][0],
+        self.assertEqual(len(holes), 1)
+        self.assertEqual(holes[0][0], 'one_hole')
+        self.assertEqual(holes[0][1][0],
                           (dt.datetime(2024, 1, 2).astimezone(tz=pytz.UTC),
                            dt.datetime(2024, 1, 3).astimezone(tz=pytz.UTC)))
 
         # Get holes of two_holes
         holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['two_holes']))
-        self.assertEquals(len(holes), 1)
-        self.assertEquals(holes[0][0], 'two_holes')
-        self.assertEquals(holes[0][1][0],
+        self.assertEqual(len(holes), 1)
+        self.assertEqual(holes[0][0], 'two_holes')
+        self.assertEqual(holes[0][1][0],
                           (dt.datetime(2024, 1, 2).astimezone(tz=pytz.UTC),
                            dt.datetime(2024, 1, 3).astimezone(tz=pytz.UTC)))
-        self.assertEquals(holes[0][1][1],
+        self.assertEqual(holes[0][1][1],
                           (dt.datetime(2024, 1, 5).astimezone(tz=pytz.UTC),
                            dt.datetime(2024, 1, 8).astimezone(tz=pytz.UTC)))
 
         # Get holes of no_hole
         holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['no_hole']))
-        self.assertEquals(holes[0][0], 'no_hole')
-        self.assertEquals(holes[0][1], [])
+        self.assertEqual(holes[0][0], 'no_hole')
+        self.assertEqual(holes[0][1], [])
 
         # Get all holes
         holes = list(TestDataStore.find_holes(self.test_client_id, sd, ed, freq='D', prms=['no_hole', 'one_hole', 'two_holes', 'non_existing']))
-        self.assertEquals(len(holes), 4)
+        self.assertEqual(len(holes), 4)
