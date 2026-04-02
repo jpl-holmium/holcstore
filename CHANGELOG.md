@@ -1,3 +1,6 @@
+### v0.6.1 - 2026-02-26
+- TimeseriesChunkStore yield_many_ts allow request over id
+
 ### v0.6.0 - 2026-02-26
 - Add DataFrameStore
 

@@ -207,11 +207,14 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         abstract = True
 
     @classmethod
-    def get_model_keys(cls) -> List[str]:
+    def get_model_keys(cls, allow_id=False) -> List[str]:
         """ Returns the list of the keys added to the non abstract class """
         if cls._model_keys is None:
             cls._model_keys = set([field.name for field in cls._meta.get_fields()]) - KEYS_ABSTRACT_CLASS
-        return cls._model_keys
+        if allow_id:
+            return {'id', *cls._model_keys}
+        else:
+            return cls._model_keys
 
     @classmethod
     def _get_model_timedelta(cls) -> pd.Timedelta:
@@ -901,14 +904,14 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         return serie
 
     @classmethod
-    def _check_attrs(cls, attrs):
+    def _check_attrs(cls, attrs, allow_id=True):
         fields_required = []
         for k in attrs.keys():
             if '__' in k:
                 k = k.split('__')[0]
             fields_required.append(k)
 
-        bad = set(fields_required) - cls.get_model_keys()
+        bad = set(fields_required) - cls.get_model_keys(allow_id=allow_id)
         if bad:
             raise ValueError(f"Unknown attribute(s) {bad}")
 
