@@ -1,3 +1,7 @@
+
+### v0.6.2 - 2026-04-07
+- Add get_last_version_lc for Store
+
 ### v0.6.1 - 2026-02-26
 - TimeseriesChunkStore yield_many_ts allow request over id
 
