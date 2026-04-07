@@ -6,7 +6,7 @@ from typing import List, Dict, Union
 
 import pandas as pd
 from django.db import models
-from django.db.models import Max
+from django.db.models import Max, OuterRef, Subquery
 from packaging.version import Version
 from pyarrow import BufferReader
 
@@ -216,18 +216,52 @@ class Store(models.Model):
                 yield prm, nulls_seqs
 
     @classmethod
-    def get_last_version_lc(cls, prm: str, client_id: int, custom_filters=None, order_by=('-version',)) -> Union[None, pd.Series]:
+    def get_last_version_lc(cls, prm: str, client_id: int, custom_filters=None) -> Union[None, Dict]:
+        # TODO à tester
         if custom_filters is None:
             custom_filters = {}
-        entry = cls.objects.filter(prm=prm, client_id=client_id, **custom_filters).order_by(*order_by).first()
-        ds = None
+        entry = cls.objects.filter(prm=prm, client_id=client_id, **custom_filters).order_by('-version').first()
+        entry_dict = None
         if entry is not None:
             reader = BufferReader(entry.data)
             ds = pd.read_feather(reader)
             if 'index' in ds.columns:
                 ds.set_index('index', inplace=True)
-            ds = ds.iloc[:, 0]
-        return ds
+            entry_dict = vars(entry)
+            entry_dict['data'] = ds.iloc[:, 0]
+        return entry_dict
+
+    @classmethod
+    def get_many_last_version_lc(cls, prms: List[str], client_id: int, custom_filters=None) -> Dict[str, Dict]:
+        # TODO à tester
+        if custom_filters is None:
+            custom_filters = {}
+
+        max_version_subquery = (
+            cls.objects
+            .filter(prm=OuterRef("prm"))
+            .values("prm")
+            .annotate(max_version=Max("version"))
+            .values("max_version")[:1]
+        )
+        qs = (
+            cls.objects
+            .filter(client_id=client_id, prm__in=prms, **custom_filters)
+            .annotate(max_version=Subquery(max_version_subquery))
+            .filter(version=models.F("max_version"))
+        )
+
+        results = dict()
+        for entry in qs:
+            reader = BufferReader(entry.data)
+            ds = pd.read_feather(reader)
+            if 'index' in ds.columns:
+                ds.set_index('index', inplace=True)
+            entry_dict = vars(entry)
+            entry_dict['data'] = ds.iloc[:, 0]
+            results[entry.prm] = entry_dict
+
+        return results
 
     @classmethod
     def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None,
