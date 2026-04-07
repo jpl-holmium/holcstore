@@ -2,7 +2,7 @@ import datetime as dt
 import io
 import logging
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, Union
 
 import pandas as pd
 from django.db import models
@@ -214,6 +214,20 @@ class Store(models.Model):
                 # Yield the output for this prm
                 # This allows processing part by part without waiting for the entire operation to complete
                 yield prm, nulls_seqs
+
+    @classmethod
+    def get_last_version_lc(cls, prm: str, client_id: int, custom_filters=None, order_by=('-version',)) -> Union[None, pd.Series]:
+        if custom_filters is None:
+            custom_filters = {}
+        entry = cls.objects.filter(prm=prm, client_id=client_id, **custom_filters).order_by(*order_by).first()
+        ds = None
+        if entry is not None:
+            reader = BufferReader(entry.data)
+            ds = pd.read_feather(reader)
+            if 'index' in ds.columns:
+                ds.set_index('index', inplace=True)
+            ds = ds.iloc[:, 0]
+        return ds
 
     @classmethod
     def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None,

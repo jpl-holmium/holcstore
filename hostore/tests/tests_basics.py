@@ -120,6 +120,15 @@ class HoCacheTestCase(TransactionTestCase, TempTestTableHelper):
         # Vérifier que la combinaison donne la deuxième version
         pd.testing.assert_series_equal(data[0]['data'], self.test_data_2, check_names=False)
 
+    def test_get_last_version_lc(self):
+        ds = TestDataStore.get_last_version_lc(self.test_prm_2, self.test_client_id)
+        # Vérifier que c'est bien la dernière version qui est renvoyée
+        pd.testing.assert_series_equal(ds, self.test_data_2, check_names=False)
+
+        # Vérification que None est bien renvoyé si le PRM n'existe pas'
+        ds = TestDataStore.get_last_version_lc("NON_EXISTING", self.test_client_id)
+        self.assertIsNone(ds)
+
     def test_non_combined_versions(self):
         data = TestDataStore.get_lc(self.test_prm_2, self.test_client_id, combined_versions=False)
         self.assertEqual(len(data), 2)
