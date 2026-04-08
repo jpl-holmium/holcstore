@@ -36,8 +36,70 @@ class CompressedExport:
         return zip_buffer
 
 
+
+@admin.action(description="Download selected timeseries")
+def download_timeseries_from_legacy_store(modeladmin, request, queryset):
+    """
+    Download selected timeseries from TimeseriesStore
+
+    Args:
+        modeladmin:
+        request:
+        queryset:
+    Returns:
+    """
+    holc_ts_qs = queryset.all()
+    if not holc_ts_qs.exists():
+        modeladmin.message_user(
+            request,
+            gettext("Please select at least one object"),
+            messages.WARNING,
+        )
+        return
+    one_ts_obj = holc_ts_qs.first()
+    _read_many_entries_qs = one_ts_obj.__class__._read_many_entries_qs
+    entries = _read_many_entries_qs(holc_ts_qs)
+    exp = CompressedExport()
+    summary_data = []
+    ii = 0
+    for prm, values in entries.items():
+        # Application du format
+        for entry in values:
+            filename = f'export_serie_{ii}.csv'
+            ds = entry.pop('data')
+            df = ds.to_frame(name='data')
+            exp.append_df_attach(df, filename)
+            _ = entry.pop('_state')
+            summary_data.append({'filename': filename, **entry})
+            ii += 1
+
+    # Append summary
+    df_summary = pd.DataFrame(summary_data)
+    exp.append_df_attach(df_summary, f'content_summary.csv')
+
+    # Make binary
+    zip_buffer = exp.make_zip_binary()
+
+    # Prepare the response, setting the HTTP headers for a downloadable file
+    model_name_exported = one_ts_obj.__class__.__name__
+    output_file = f'export_{len(entries)}_{model_name_exported}_{dt.datetime.utcnow().isoformat()}.zip'
+    response = HttpResponse(zip_buffer, content_type='application/zip')
+    response['Content-Disposition'] = f'attachment; filename="{output_file}"'
+
+    return response
+
+
 @admin.action(description="Download selected timeseries")
 def download_timeseries_from_store(modeladmin, request, queryset):
+    """
+    Download selected timeseries from TimeseriesStore
+
+    Args:
+        modeladmin:
+        request:
+        queryset:
+    Returns:
+    """
     holc_ts_qs = queryset.all()
     if not holc_ts_qs.exists():
         modeladmin.message_user(
@@ -82,6 +144,15 @@ def download_timeseries_from_store(modeladmin, request, queryset):
 
 @admin.action(description="Download selected timeseries chunks")
 def download_timeseries_from_chunkstore(modeladmin, request, queryset):
+    """
+    Download selected timeseries from TimeseriesChunkStore
+
+    Args:
+        modeladmin:
+        request:
+        queryset:
+    Returns:
+    """
     holc_ts_qs = queryset.all()
     if not holc_ts_qs.exists():
         modeladmin.message_user(

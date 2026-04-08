@@ -1,3 +1,6 @@
+### v0.6.2 - 2026-04-08
+- admin action to download timeseries from Store
+
 ### v0.6.1 - 2026-02-26
 - TimeseriesChunkStore yield_many_ts allow request over id
 
