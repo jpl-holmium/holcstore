@@ -40,7 +40,7 @@ class CompressedExport:
 @admin.action(description="Download selected timeseries")
 def download_timeseries_from_legacy_store(modeladmin, request, queryset):
     """
-    Download selected timeseries from TimeseriesStore
+    Download selected timeseries from Store
 
     Args:
         modeladmin:
