@@ -11,10 +11,8 @@ from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
-from django.db.models import QuerySet, Max
+from django.db.models import QuerySet
 from django.db.models.base import ModelBase
-from django.db.models.signals import class_prepared
-from django.dispatch import receiver
 from pytz.exceptions import UnknownTimeZoneError
 from hostore.utils.timeseries import _localise_date, _localised_now
 
@@ -305,7 +303,6 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
         qs = cls.objects.filter(**filters)
         if qs.exists():
-            # return qs.aggregate(last=Max("updated_at"))["last"]
             return qs.order_by('-updated_at').first().updated_at
         else:
             return _localise_date(dt.datetime(2000, 1, 1))
@@ -534,7 +531,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             yield serie, dict(zip(model_keys, keys_tuple))
 
     @classmethod
-    def get_max_horodate(cls, filters: dict, qs_iterator_chunk_size=200):
+    def get_max_horodate(cls, filters: dict):
         """
         Get maximum horodate of timeseries with filters matching filters.
 
@@ -544,16 +541,10 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
         # On valide seulement les clés fournies
         cls._check_attrs(filters)
 
-        qs = cls.objects.filter(**filters, is_deleted=False).order_by(*(cls.get_model_keys()), 'chunk_index')
-        max_qs_chunk_index = qs.aggregate(max_chunk=Max('chunk_index'))['max_chunk']
-        qs = qs.filter(chunk_index=max_qs_chunk_index)
-        current_values = None
-        max_idxs = []
-        for row in qs.iterator(chunk_size=qs_iterator_chunk_size):
-            # max de la série actuelle
-            max_idxs.append(cls._decompress(row, return_mode='max_idx'))
-
-        return max(max_idxs) if max_idxs else None
+        _obj = cls.objects.filter(**filters, is_deleted=False).order_by('-chunk_index').first()
+        if _obj is None:
+            return None
+        return cls._decompress(_obj, return_mode='max_idx')
 
     # ------------------------------------------------------------------
     #  SYNC CLIENT ⇆ SERVER
