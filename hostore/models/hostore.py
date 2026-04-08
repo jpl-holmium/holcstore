@@ -304,6 +304,14 @@ class Store(models.Model):
         if custom_filters is None:
             custom_filters = {}
         qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters).order_by(*order_by)
+        return cls._read_many_entries_qs(qs, combined_versions, combined_by, combined_delay)
+
+    @classmethod
+    def _read_many_entries_qs(cls, qs,
+                              combined_versions=True,
+                              combined_by=('prm',),
+                              combined_delay=None
+                              ):
         results = defaultdict(lambda: [])
         for entry in qs:
             reader = BufferReader(entry.data)

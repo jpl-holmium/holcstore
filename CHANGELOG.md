@@ -1,3 +1,5 @@
+### v0.6.3 - 2026-04-08
+- admin action to download timeseries from Store
 
 ### v0.6.2 - 2026-04-07
 - Add get_last_version_lc for Store
