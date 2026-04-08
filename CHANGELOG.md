@@ -1,3 +1,6 @@
+### v0.6.4 - 2026-04-08
+- minor performance improvement
+
 ### v0.6.3 - 2026-04-08
 - admin action to download timeseries from Store
 
