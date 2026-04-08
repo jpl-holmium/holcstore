@@ -2,7 +2,7 @@ import datetime as dt
 import io
 import logging
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, Union
 
 import pandas as pd
 from django.db import models
@@ -216,6 +216,20 @@ class Store(models.Model):
                 yield prm, nulls_seqs
 
     @classmethod
+    def get_last_version_lc(cls, prm: str, client_id: int, custom_filters=None, order_by=('-version',)) -> Union[None, pd.Series]:
+        if custom_filters is None:
+            custom_filters = {}
+        entry = cls.objects.filter(prm=prm, client_id=client_id, **custom_filters).order_by(*order_by).first()
+        ds = None
+        if entry is not None:
+            reader = BufferReader(entry.data)
+            ds = pd.read_feather(reader)
+            if 'index' in ds.columns:
+                ds.set_index('index', inplace=True)
+            ds = ds.iloc[:, 0]
+        return ds
+
+    @classmethod
     def get_lc(cls, prm: str, client_id: int, combined_versions=True, version: int = None, custom_filters=None,
                combined_by=('prm',),
                order_by=('-version',),
@@ -290,6 +304,14 @@ class Store(models.Model):
         if custom_filters is None:
             custom_filters = {}
         qs = cls.objects.filter(prm__in=prms, client_id=client_id, **custom_filters).order_by(*order_by)
+        return cls._read_many_entries_qs(qs, combined_versions, combined_by, combined_delay)
+
+    @classmethod
+    def _read_many_entries_qs(cls, qs,
+                              combined_versions=True,
+                              combined_by=('prm',),
+                              combined_delay=None
+                              ):
         results = defaultdict(lambda: [])
         for entry in qs:
             reader = BufferReader(entry.data)

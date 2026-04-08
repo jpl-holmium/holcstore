@@ -27,23 +27,14 @@ INSTALLED_APPS = [
 ```
 
 
-2. Start using the abstract model ``Store`` by importing it
-```python
-from hostore.models import Store
+2. Define your store class using the appropriate store class.
 
-class YourStore(Store):
-    # add new fields
-
-    class Meta(Store.Meta):
-        abstract = False
-        # add your meta
-```
 # Choose the appropriate store
 
 ## Store class
 This class is used to store timeseries, using a key:value pattern. A prm key is used to reference the saved series.
 
-Handle update and replace features.
+Handle update, replace and versionning features.
 
 ## TimeseriesStore class
 This class is used to store timeseries, using a user provided pattern through its model.
@@ -59,6 +50,19 @@ User friendly API to perform a client-server sync.
 
 # Basic Usage: Store class
 This store is appropriate if you want to store using a "key - value" pattern.
+
+#### Define your class in models.py
+
+```python
+from hostore.models import Store
+
+class YourStore(Store):
+    # add new fields
+
+    class Meta(Store.Meta):
+        abstract = False
+        # add your meta
+```
 
 #### Saving a timeserie to database
 
@@ -117,6 +121,16 @@ datas = YourStore.get_lc(key, client_id, combined_versions=False)
 datas = YourStore.get_lc(key, client_id, version=1)
 ```
 
+#### Download series from admin
+
+```python
+# admin.py
+@admin.register(MyTimeseriesStore)
+class MyTimeseriesStoreAdmin(admin.ModelAdmin):
+  from hostore.admin_actions import download_timeseries_from_legacy_store
+  actions = [download_timeseries_from_legacy_store]  # enable download from admin
+```
+
 # Basic Usage: TimeseriesStore class
 This store is the easiest to use, but has less features than TimeseriesChunkStore
 
@@ -156,8 +170,8 @@ ds_ts1 = datas[0]['data']
 @admin.register(MyTimeseriesStore)
 class MyTimeseriesStoreAdmin(admin.ModelAdmin):
   from hostore.admin_actions import download_timeseries_from_store
-  actions = [download_timeseries_from_store]
-    
+  actions = [download_timeseries_from_store]  # enable download from admin
+
 ```
 
 # Basic usage: TimeseriesChunkStore class

@@ -1,5 +1,7 @@
+import csv
 import io
 import zipfile
+from io import StringIO
 
 import pandas as pd
 from unittest.mock import Mock
@@ -11,8 +13,9 @@ from django.db import models
 from django.http import HttpResponse
 from django.test import TransactionTestCase
 
-from hostore.admin_actions import download_timeseries_from_store, download_timeseries_from_chunkstore
-from hostore.models import TimeseriesStore, TimeseriesChunkStore
+from hostore.admin_actions import download_timeseries_from_store, download_timeseries_from_chunkstore, \
+    download_timeseries_from_legacy_store
+from hostore.models import TimeseriesStore, TimeseriesChunkStore, Store
 from hostore.utils.utils_test import TempTestTableHelper
 
 
@@ -20,7 +23,104 @@ def gen_serie(start, end, data, freq='1h'):
     dt_rng = pd.date_range(start, end, freq=freq)
     return pd.Series(data, index=dt_rng, name='data')
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Test download_timeseries_from_legacy_store (Store model)
+# ----------------------------------------------------------------------------------------------------------------------
+class TestLegacyStoreWithAttribute(Store):
+    year = models.IntegerField()
+    class Meta(Store.Meta):
+        abstract = False
+        constraints = [models.UniqueConstraint(fields=['prm', 'client_id', 'year', 'created_at'], name='hostore_TestLegacyStoreWithAttribute_unq'), ]
+        app_label = 'ts_inline'
+        managed = True
 
+
+class TestLegacyStoreWithAttributeAdmin(admin.ModelAdmin):
+    resource_classes = [TestLegacyStoreWithAttribute]
+    list_display = ('year', 'kind', )
+    list_filter = ('year', 'kind', )
+    actions = [download_timeseries_from_legacy_store]
+
+
+def normalize(content):
+    reader = csv.DictReader(StringIO(content), delimiter=';')
+
+    rows = []
+    for row in reader:
+        row.pop('last_modified', None)
+        row.pop('created_at', None)
+        rows.append(row)
+
+    # tri pour éviter dépendance à l’ordre
+    return sorted(rows, key=lambda x: x['id'])
+
+
+class DownloadTimeseriesLegacyStoreAdminActionTest(TransactionTestCase, TempTestTableHelper):
+    databases = ('default',)
+    test_table = TestLegacyStoreWithAttribute
+
+    def setUp(self):
+        self._ensure_tables()
+        # populate TestLegacyStoreWithAttribute
+        self.ds1 = gen_serie("2020-01-01 00:00:00+00:00", "2020-01-01 02:00:00+00:00", [1, 2, 3])
+        TestLegacyStoreWithAttribute.set_lc(
+            'prm1',
+            self.ds1,
+            55,
+            attributes_to_set=dict(year=2020)
+        )
+        self.ds2 = gen_serie("2021-01-01 00:00:00+00:00", "2021-01-01 02:00:00+00:00", [11, 21, 31])
+        TestLegacyStoreWithAttribute.set_lc(
+            'prm2',
+            self.ds2,
+            55,
+            attributes_to_set=dict(year=2021)
+        )
+
+        # Mock request
+        self.user = get_user_model().objects.create(
+            email='user@example.com', password='password', is_superuser=False)
+        self.mock_request = Mock(user=self.user)
+
+        # Create an instance of the admin site
+        self.site = AdminSite()
+
+        # Create an instance of the admin class for your model
+        self.model_admin = TestLegacyStoreWithAttributeAdmin(
+            TestLegacyStoreWithAttribute, self.site)
+
+    def test_zip_content(self):
+        queryset = TestLegacyStoreWithAttribute.objects.all()
+        response = download_timeseries_from_legacy_store(self.model_admin, self.mock_request, queryset)
+        self.assertIsInstance(response, HttpResponse)
+        byte_content = response.content
+        zip_bytes_io = io.BytesIO(byte_content)
+        with zipfile.ZipFile(zip_bytes_io, 'r') as zip_file:
+            # List all files inside the zip file
+            file_list = zip_file.namelist()
+            self.assertListEqual(file_list, ['export_serie_0.csv', 'export_serie_1.csv', 'content_summary.csv'])
+            with zip_file.open('content_summary.csv') as specific_file:
+                # Read the file content (assuming it's a text file, like CSV)
+                file_content1 = specific_file.read().decode('utf-8')
+                expected = (';filename;id;client_id;prm;last_modified;created_at;version;year\n'
+                            '0;export_serie_0.csv;3;55;prm1;2026-04-07 15:38:33.316492+00:00;2026-04-07 15:38:33.316514+00:00;0;2020\n'
+                            '1;export_serie_1.csv;4;55;prm2;2026-04-07 15:38:33.317967+00:00;2026-04-07 15:38:33.317985+00:00;0;2021')
+
+                normalized_file = normalize(file_content1)
+                normalized_expected = normalize(expected)
+                self.assertEqual(normalized_file, normalized_expected)
+
+            with zip_file.open('export_serie_0.csv') as specific_file:
+                # Read the file content (assuming it's a text file, like CSV)
+                file_contentlc = specific_file.read().decode('utf-8')
+                expected = ';data\n2020-01-01 00:00:00+00:00;1\n2020-01-01 01:00:00+00:00;2\n2020-01-01 02:00:00+00:00;3\n'
+
+                self.assertEqual(file_contentlc, expected)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Test download_timeseries_from_store (TimeseriesStore model)
+# ----------------------------------------------------------------------------------------------------------------------
 class TestAdminTimeseriesStoreWithAttribute(TimeseriesStore):
     year = models.IntegerField()
     kind = models.CharField(max_length=100)
@@ -87,6 +187,9 @@ class DownloadTimeseriesAdminActionTest(TransactionTestCase, TempTestTableHelper
                 self.assertEqual(file_content, expected)
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Test download_timeseries_from_chunkstore (TimeseriesChunkStore model)
+# ----------------------------------------------------------------------------------------------------------------------
 class TestAdminTimeseriesChunkStore(TimeseriesChunkStore):
     version = models.IntegerField()
     kind = models.CharField(max_length=100)
