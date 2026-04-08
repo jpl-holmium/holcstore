@@ -761,7 +761,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
     @classmethod
     def _chunk(cls, serie: pd.Series):
-        if not cls.CHUNK_AXIS:
+        if (not cls.CHUNK_AXIS) or len(cls.CHUNK_AXIS) == 1:
             yield serie
         else:
             grouper = serie.groupby([

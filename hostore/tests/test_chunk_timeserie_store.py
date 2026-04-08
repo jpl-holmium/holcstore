@@ -94,7 +94,7 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
         """Génère une série aléatoire de longueur `periods`."""
         rng = pd.date_range(start=start, periods=periods, freq=freq, tz=cls.input_tz)
         if full_nan:
-            return pd.Series(None, index=rng)
+            return pd.Series(None, index=rng, dtype=float)
         np.random.seed(seed)
         ds = pd.Series(np.random.randn(periods), index=rng)
         if cls.series_na is not None:
