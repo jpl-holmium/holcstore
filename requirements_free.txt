@@ -11,6 +11,5 @@ pyarrow
 requests
 setuptools
 sqlparse
-time-machine
 typing_extensions
 wheel

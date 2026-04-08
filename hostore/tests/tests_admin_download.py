@@ -6,7 +6,6 @@ from io import StringIO
 import pandas as pd
 from unittest.mock import Mock
 
-import time_machine
 from django.contrib import admin
 from django.contrib.admin import AdminSite
 from django.contrib.auth import get_user_model
@@ -56,7 +55,6 @@ def normalize(content):
     return sorted(rows, key=lambda x: x['id'])
 
 
-@time_machine.travel("2026-01-01 08:00:00+02:00")
 class DownloadTimeseriesLegacyStoreAdminActionTest(TransactionTestCase, TempTestTableHelper):
     databases = ('default',)
     test_table = TestLegacyStoreWithAttribute

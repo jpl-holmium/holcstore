@@ -56,8 +56,7 @@ def download_timeseries_from_legacy_store(modeladmin, request, queryset):
             messages.WARNING,
         )
         return
-    one_ts_obj = holc_ts_qs.first()
-    _read_many_entries_qs = one_ts_obj.__class__._read_many_entries_qs
+    _read_many_entries_qs = queryset.model._read_many_entries_qs
     entries = _read_many_entries_qs(holc_ts_qs)
     exp = CompressedExport()
     summary_data = []
@@ -81,7 +80,7 @@ def download_timeseries_from_legacy_store(modeladmin, request, queryset):
     zip_buffer = exp.make_zip_binary()
 
     # Prepare the response, setting the HTTP headers for a downloadable file
-    model_name_exported = one_ts_obj.__class__.__name__
+    model_name_exported = queryset.model.__name__
     output_file = f'export_{len(entries)}_{model_name_exported}_{dt.datetime.utcnow().isoformat()}.zip'
     response = HttpResponse(zip_buffer, content_type='application/zip')
     response['Content-Disposition'] = f'attachment; filename="{output_file}"'
