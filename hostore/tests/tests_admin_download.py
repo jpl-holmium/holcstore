@@ -113,8 +113,7 @@ class DownloadTimeseriesLegacyStoreAdminActionTest(TransactionTestCase, TempTest
             with zip_file.open('export_serie_0.csv') as specific_file:
                 # Read the file content (assuming it's a text file, like CSV)
                 file_contentlc = specific_file.read().decode('utf-8')
-                expected = ';data\n2020-01-01 00:00:00+00:00;1\n2020-01-01 01:00:00+00:00;2\n2020-01-01 02:00:00+00:00;3\n'
-
+                expected = 'index;data\n2020-01-01 00:00:00+00:00;1\n2020-01-01 01:00:00+00:00;2\n2020-01-01 02:00:00+00:00;3\n'
                 self.assertEqual(file_contentlc, expected)
 
 
