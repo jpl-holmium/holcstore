@@ -1,3 +1,6 @@
+### v0.6.5 - 2026-04-09
+- TimeseriesChunkStore get_many_max_horodate
+
 ### v0.6.4 - 2026-04-08
 - minor performance improvement
 
