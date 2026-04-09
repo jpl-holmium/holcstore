@@ -11,8 +11,9 @@ from django.db import models, transaction
 import lz4.frame as lz4
 import numpy as np
 import pandas as pd
-from django.db.models import QuerySet
+from django.db.models import QuerySet, Max
 from django.db.models.base import ModelBase
+from pyarrow import dictionary
 from pytz.exceptions import UnknownTimeZoneError
 from hostore.utils.timeseries import _localise_date, _localised_now
 
@@ -148,7 +149,7 @@ class _TCSMeta(ModelBase):
             "f" + new_cls.STORE_FREQ,          # ex. freq1h
             "tz" + new_cls.STORE_TZ.replace('/', '_'),  # ex. tzEurope_Paris
             "sync" if new_cls.ALLOW_CLIENT_SERVER_SYNC else "nosync",
-        ])
+            ])
 
         # 2.2. Nom de table par défaut : <app>_<model>__<signature>
         default_table = _tbl_name(meta.app_label, name, sig)
@@ -546,6 +547,24 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             return None
         return cls._decompress(_obj, return_mode='max_idx')
 
+    @classmethod
+    def get_many_max_horodate(cls, filters: dict, distinct_on=('id',)):
+        cls._check_attrs(filters)
+
+        qs = (
+            cls.objects
+            .filter(**filters, is_deleted=False)
+            .order_by(*distinct_on, '-chunk_index')
+            .distinct(*distinct_on)
+        )
+
+        results = {}
+        for obj in qs:
+            key = tuple(getattr(obj, field) for field in distinct_on)
+            results[key] = cls._decompress(obj, return_mode='max_idx')
+
+        return results
+
     # ------------------------------------------------------------------
     #  SYNC CLIENT ⇆ SERVER
     # ------------------------------------------------------------------
@@ -574,11 +593,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
     @classmethod
     def list_updates(
-        cls,
-        since: pd.Timestamp,
-        filters: dict | None = None,
-        limit: int | None = None,
-        offset: int | None = None,
+            cls,
+            since: pd.Timestamp,
+            filters: dict | None = None,
+            limit: int | None = None,
+            offset: int | None = None,
     ) -> list[dict]:
         """Convenience helper returning a list from ``updates_queryset``.
 

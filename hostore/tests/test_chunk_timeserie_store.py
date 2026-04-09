@@ -1,4 +1,6 @@
 import datetime as dt
+from unittest import skip
+
 import numpy as np
 import pandas as pd
 from django.db import models, IntegrityError
@@ -153,6 +155,23 @@ class BaseTimeseriesChunkStoreTestCase(TransactionTestCase, TempTestTableHelper)
         if not self.no_user_fields:
             got = self.test_table.get_ts({"version": 1, "kind_very_long_name_for_testing_purpose": "nonexistent"})
             self.assertEqual(got, None)
+
+    @skip
+    def test_get_many_max_horodate(self):
+        """
+        Ce test ne peux pas fonctionner car la BDD n'est pas Postgres (le distinct ne fonctionne que sur Postgres)
+        """
+        serie_a = self.make_series("2020-01-01", 24 * 365)
+        attrs = self.make_attrs({"version": 1, "kind_very_long_name_for_testing_purpose": "A"})
+        self.test_table.set_ts(attrs, serie_a)
+
+        serie_b = self.make_series("2020-01-01", 24 * 345)
+        attrs = self.make_attrs({"version": 1, "kind_very_long_name_for_testing_purpose": "B"})
+        self.test_table.set_ts(attrs, serie_b)
+
+        max_horodates = self.test_table.get_many_max_horodate({}, distinct_on=("kind_very_long_name_for_testing_purpose", "version"))
+        print(max_horodates)
+
 
     def test_set_and_get_underconstrained(self):
         # "under constrained" request - secured by _ensure_all_attrs_specified
