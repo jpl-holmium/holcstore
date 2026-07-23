@@ -1,3 +1,6 @@
+### v0.6.6 - 2026-07-23
+- add bulk_create kwargs to TimeseriesChunkStore
+
 ### v0.6.5 - 2026-04-09
 - TimeseriesChunkStore get_many_max_horodate
 

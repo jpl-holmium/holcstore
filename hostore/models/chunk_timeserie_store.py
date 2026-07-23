@@ -419,7 +419,7 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
     @classmethod
     def set_many_ts(cls, mapping: dict[tuple, pd.Series], keys: tuple[str, ...],
-                    bulk_create_batch_size=200):
+                    bulk_create_batch_size=200, kwargs_bulk_create: dict = None):
 
 
         """
@@ -435,12 +435,15 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             mapping : {(version_value, kind_value,...): serie}
             keys    : ('version','kind',...)
             bulk_create_batch_size : bulk batch size for bulk insertion
+            kwargs_bulk_create: kwargs to pass to bulk_create (ex: {'ignore_conflicts': True})
 
         Returns:
         """
         if cls.ALLOW_CLIENT_SERVER_SYNC:
             raise ValueError(f'Trying to use set_many_ts with model {cls.__name__} '
                              f'while ALLOW_CLIENT_SERVER_SYNC=True.')
+        if kwargs_bulk_create is None:
+            kwargs_bulk_create = {}
 
         rows = []
         for ktuple, serie in mapping.items():
@@ -452,9 +455,9 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             for sub in cls._chunk(serie):
                 rows.append(cls._build_row(attrs, sub))
                 if len(rows) >= bulk_create_batch_size:
-                    cls._bulk_create(rows, bulk_create_batch_size)
+                    cls._bulk_create(rows, bulk_create_batch_size, **kwargs_bulk_create)
                     rows = []
-        cls._bulk_create(rows, bulk_create_batch_size)
+        cls._bulk_create(rows, bulk_create_batch_size, **kwargs_bulk_create)
 
     @classmethod
     def yield_many_ts(cls, filters: dict, start: pd.Timestamp=None, end: pd.Timestamp=None,
@@ -840,7 +843,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             )
 
     @classmethod
-    def _bulk_create(cls, rows: list, bulk_create_batch_size: int):
+    def _bulk_create(cls, rows: list, bulk_create_batch_size: int,
+                     ignore_conflicts=False,
+                     update_conflicts=False,
+                     update_fields=None,
+                     unique_fields=None):
         if not rows:
             return
 
@@ -848,6 +855,10 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
             cls.objects.bulk_create(
                 rows,
                 batch_size=bulk_create_batch_size,  # optionnel : tuning
+                ignore_conflicts=ignore_conflicts,
+                update_conflicts=update_conflicts,
+                update_fields=update_fields,
+                unique_fields=unique_fields
             )
 
     @classmethod
