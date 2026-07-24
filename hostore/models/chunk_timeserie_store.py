@@ -774,9 +774,11 @@ class TimeseriesChunkStore(models.Model, metaclass=_TCSMeta):
 
     @classmethod
     def _chunk(cls, serie: pd.Series):
-        if (not cls.CHUNK_AXIS) or len(cls.CHUNK_AXIS) == 1:
+        if not cls.CHUNK_AXIS:
             yield serie
         else:
+            if len(cls.CHUNK_AXIS) == 1 and cls.CHUNK_AXIS[0].lower() != "year":
+                raise ValueError(f"Chunking axis must be 'year' or 'year,month' (got {cls.CHUNK_AXIS})")
             grouper = serie.groupby([
                 getattr(serie.index, ax) for ax in cls.CHUNK_AXIS
             ])

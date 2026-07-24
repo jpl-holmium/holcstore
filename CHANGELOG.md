@@ -1,3 +1,6 @@
+### v0.6.7 - 2026-07-24
+- correct chunk_index computation for CHUNK_AXIS = ('year', )
+
 ### v0.6.6 - 2026-07-23
 - add bulk_create kwargs to TimeseriesChunkStore
 

@@ -399,6 +399,44 @@ class TestTwoTimeseriesTestCase(BaseTimeseriesChunkStoreTestCase):
             self.assertIn(attrs[kind_key], ["SERIE_A", "SERIE_B"])
 
 
+
+class TestMultiChunkIndexYearStoreTestCase(BaseTimeseriesChunkStoreTestCase):
+    """
+    Test chunk Year
+    """
+    __unittest_skip__ = False
+    test_table = TestStoreChunkYear
+    year_count_expected = 1
+
+    def test_multi_indexes(self):
+        """
+        Teste la persistence et la récupération de deux séries distinctes
+        partageant un attribut commun.
+        """
+        if self.no_user_fields:
+            return
+
+        # 1. Préparation des métadonnées
+        common_version = 10
+        attrs_a = self.make_attrs({
+            "version": common_version,
+            "kind_very_long_name_for_testing_purpose": "SERIE_A"
+        })
+
+        # 2. Création de deux séries avec des données différentes (seeds différentes)
+        serie_a = self.make_series("2024-01-01", 8760*2, seed=1)
+
+        # 3. Stockage
+        self.test_table.set_ts(attrs_a, serie_a)
+
+        # 4. Vérification que nous avons 2 chunks
+        qs = self.test_table.objects.all()
+        self.assertEqual(qs.count(), 2, "On devrait récupérer exactement 2 chunks")
+
+        chunk_indexes = list(qs.values_list('chunk_index', flat=True))
+        self.assertListEqual(chunk_indexes, [2024, 2025])
+
+
 class TestTimeseries_1ChunkTestCase(BaseTimeseriesChunkStoreTestCase):
     """
     Test chunk Year
